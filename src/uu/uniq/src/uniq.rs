@@ -1,25 +1,21 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Chirag B Jadwani <chirag.jadwani@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
-// TODO remove this when https://github.com/rust-lang/rust-clippy/issues/6902 is fixed
-#![allow(clippy::use_self)]
-
-use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
+use clap::{builder::ValueParser, crate_version, Arg, ArgAction, ArgGroup, ArgMatches, Command};
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
-use std::io::{self, stdin, stdout, BufRead, BufReader, BufWriter, Read, Write};
-use std::path::Path;
+use std::io::{self, stdin, stdout, BufRead, BufReader, BufWriter, Write};
 use std::str::FromStr;
-use strum_macros::{AsRefStr, EnumString};
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError, UUsageError};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_section, help_usage};
 
-static ABOUT: &str = "Report or omit repeated lines.";
-const USAGE: &str = "{} [OPTION]... [INPUT [OUTPUT]]...";
+const ABOUT: &str = help_about!("uniq.md");
+const USAGE: &str = help_usage!("uniq.md");
+const AFTER_HELP: &str = help_section!("after help", "uniq.md");
+
 pub mod options {
     pub static ALL_REPEATED: &str = "all-repeated";
     pub static CHECK_CHARS: &str = "check-chars";
@@ -27,6 +23,7 @@ pub mod options {
     pub static IGNORE_CASE: &str = "ignore-case";
     pub static REPEATED: &str = "repeated";
     pub static SKIP_FIELDS: &str = "skip-fields";
+    pub static OBSOLETE_SKIP_FIELDS: &str = "obsolete_skip_field";
     pub static SKIP_CHARS: &str = "skip-chars";
     pub static UNIQUE: &str = "unique";
     pub static ZERO_TERMINATED: &str = "zero-terminated";
@@ -35,8 +32,7 @@ pub mod options {
 
 static ARG_FILES: &str = "files";
 
-#[derive(PartialEq, Clone, Copy, AsRefStr, EnumString)]
-#[strum(serialize_all = "snake_case")]
+#[derive(PartialEq, Clone, Copy)]
 enum Delimiters {
     Append,
     Prepend,
@@ -58,6 +54,8 @@ struct Uniq {
     zero_terminated: bool,
 }
 
+const OBSOLETE_SKIP_FIELDS_DIGITS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
 macro_rules! write_line_terminator {
     ($writer:expr, $line_terminator:expr) => {
         $writer
@@ -67,11 +65,7 @@ macro_rules! write_line_terminator {
 }
 
 impl Uniq {
-    pub fn print_uniq<R: Read, W: Write>(
-        &self,
-        reader: &mut BufReader<R>,
-        writer: &mut BufWriter<W>,
-    ) -> UResult<()> {
+    pub fn print_uniq(&self, reader: impl BufRead, mut writer: impl Write) -> UResult<()> {
         let mut first_line_printed = false;
         let mut group_count = 1;
         let line_terminator = self.get_line_terminator();
@@ -80,6 +74,8 @@ impl Uniq {
             Some(l) => l?,
             None => return Ok(()),
         };
+
+        let writer = &mut writer;
 
         // compare current `line` with consecutive lines (`next_line`) of the input
         // and if needed, print `line` based on the command line options provided
@@ -125,7 +121,6 @@ impl Uniq {
                 }
                 match char_indices.find(|(_, c)| c.is_whitespace()) {
                     None => return "",
-
                     Some((next_field_i, _)) => i = next_field_i,
                 }
             }
@@ -198,9 +193,9 @@ impl Uniq {
                 || self.delimiters == Delimiters::Both)
     }
 
-    fn print_line<W: Write>(
+    fn print_line(
         &self,
-        writer: &mut BufWriter<W>,
+        writer: &mut impl Write,
         line: &str,
         count: usize,
         first_line_printed: bool,
@@ -212,7 +207,7 @@ impl Uniq {
         }
 
         if self.show_counts {
-            writer.write_all(format!("{:7} {}", count, line).as_bytes())
+            write!(writer, "{count:7} {line}")
         } else {
             writer.write_all(line.as_bytes())
         }
@@ -225,7 +220,7 @@ impl Uniq {
 fn get_line_string(io_line: io::Result<Vec<u8>>) -> UResult<String> {
     let line_bytes = io_line.map_err_context(|| "failed to split lines".to_string())?;
     String::from_utf8(line_bytes)
-        .map_err(|e| USimpleError::new(1, format!("failed to convert line to utf8: {}", e)))
+        .map_err(|e| USimpleError::new(1, format!("failed to convert line to utf8: {e}")))
 }
 
 fn opt_parsed<T: FromStr>(opt_name: &str, matches: &ArgMatches) -> UResult<Option<T>> {
@@ -244,34 +239,55 @@ fn opt_parsed<T: FromStr>(opt_name: &str, matches: &ArgMatches) -> UResult<Optio
     })
 }
 
-fn get_long_usage() -> String {
-    String::from(
-        "Filter adjacent matching lines from INPUT (or standard input),\n\
-        writing to OUTPUT (or standard output).
-        Note: 'uniq' does not detect repeated lines unless they are adjacent.\n\
-        You may want to sort the input first, or use 'sort -u' without 'uniq'.\n",
-    )
+/// Gets number of fields to be skipped from the shorthand option `-N`
+///
+/// ```bash
+/// uniq -12345
+/// ```
+/// the first digit isn't interpreted by clap as part of the value
+/// so `get_one()` would return `2345`, then to get the actual value
+/// we loop over every possible first digit, only one of which can be
+/// found in the command line because they conflict with each other,
+/// append the value to it and parse the resulting string as usize,
+/// an error at this point means that a character that isn't a digit was given
+fn obsolete_skip_field(matches: &ArgMatches) -> UResult<Option<usize>> {
+    for opt_text in OBSOLETE_SKIP_FIELDS_DIGITS {
+        let argument = matches.get_one::<String>(opt_text);
+        if matches.contains_id(opt_text) {
+            let mut full = opt_text.to_owned();
+            if let Some(ar) = argument {
+                full.push_str(ar);
+            }
+            let value = full.parse::<usize>();
+
+            if let Ok(val) = value {
+                return Ok(Some(val));
+            } else {
+                return Err(USimpleError {
+                    code: 1,
+                    message: format!("Invalid argument for skip-fields: {}", full),
+                }
+                .into());
+            }
+        }
+    }
+    Ok(None)
 }
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let matches = uu_app()
-        .after_help(get_long_usage())
-        .try_get_matches_from(args)?;
+    let matches = uu_app().after_help(AFTER_HELP).try_get_matches_from(args)?;
 
-    let files: Vec<String> = matches
-        .get_many::<String>(ARG_FILES)
-        .map(|v| v.map(ToString::to_string).collect())
+    let files = matches.get_many::<OsString>(ARG_FILES);
+
+    let (in_file_name, out_file_name) = files
+        .map(|fi| fi.map(AsRef::as_ref))
+        .map(|mut fi| (fi.next(), fi.next()))
         .unwrap_or_default();
 
-    let (in_file_name, out_file_name) = match files.len() {
-        0 => ("-".to_owned(), "-".to_owned()),
-        1 => (files[0].clone(), "-".to_owned()),
-        2 => (files[0].clone(), files[1].clone()),
-        _ => {
-            unreachable!() // Cannot happen as clap will fail earlier
-        }
-    };
+    let skip_fields_modern: Option<usize> = opt_parsed(options::SKIP_FIELDS, &matches)?;
+
+    let skip_fields_old: Option<usize> = obsolete_skip_field(&matches)?;
 
     let uniq = Uniq {
         repeats_only: matches.get_flag(options::REPEATED)
@@ -281,7 +297,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             || matches.contains_id(options::GROUP),
         delimiters: get_delimiter(&matches),
         show_counts: matches.get_flag(options::COUNT),
-        skip_fields: opt_parsed(options::SKIP_FIELDS, &matches)?,
+        skip_fields: skip_fields_modern.or(skip_fields_old),
         slice_start: opt_parsed(options::SKIP_CHARS, &matches)?,
         slice_stop: opt_parsed(options::CHECK_CHARS, &matches)?,
         ignore_case: matches.get_flag(options::IGNORE_CASE),
@@ -296,13 +312,13 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     uniq.print_uniq(
-        &mut open_input_file(&in_file_name)?,
-        &mut open_output_file(&out_file_name)?,
+        open_input_file(in_file_name)?,
+        open_output_file(out_file_name)?,
     )
 }
 
 pub fn uu_app() -> Command {
-    Command::new(uucore::util_name())
+    let mut cmd = Command::new(uucore::util_name())
         .version(crate_version!())
         .about(ABOUT)
         .override_usage(format_usage(USAGE))
@@ -336,7 +352,7 @@ pub fn uu_app() -> Command {
                 .num_args(0..=1)
                 .default_missing_value("separate")
                 .require_equals(true)
-                .conflicts_with_all(&[
+                .conflicts_with_all([
                     options::REPEATED,
                     options::ALL_REPEATED,
                     options::UNIQUE,
@@ -381,6 +397,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::SKIP_FIELDS)
                 .short('f')
                 .long(options::SKIP_FIELDS)
+                .overrides_with_all(OBSOLETE_SKIP_FIELDS_DIGITS)
                 .help("avoid comparing the first N fields")
                 .value_name("N"),
         )
@@ -398,12 +415,42 @@ pub fn uu_app() -> Command {
                 .help("end lines with 0 byte, not newline")
                 .action(ArgAction::SetTrue),
         )
+        .group(
+            // in GNU `uniq` every every digit of these arguments
+            // would be interpreted as a simple flag,
+            // these flags then are concatenated to get
+            // the number of fields to skip.
+            // in this way `uniq -1 -z -2` would be
+            // equal to `uniq -12 -q`, since this behavior
+            // is counterintuitive and it's hard to do in clap
+            // we handle it more like GNU `fold`: we have a flag
+            // for each possible initial digit, that takes the
+            // rest of the value as argument.
+            // we disallow explicitly multiple occurrences
+            // because then it would have a different behavior
+            // from GNU
+            ArgGroup::new(options::OBSOLETE_SKIP_FIELDS)
+                .multiple(false)
+                .args(OBSOLETE_SKIP_FIELDS_DIGITS)
+        )
         .arg(
             Arg::new(ARG_FILES)
                 .action(ArgAction::Append)
+                .value_parser(ValueParser::os_string())
                 .num_args(0..=2)
                 .value_hint(clap::ValueHint::FilePath),
-        )
+        );
+
+    for i in OBSOLETE_SKIP_FIELDS_DIGITS {
+        cmd = cmd.arg(
+            Arg::new(i)
+                .short(i.chars().next().unwrap())
+                .num_args(0..=1)
+                .hide(true),
+        );
+    }
+
+    cmd
 }
 
 fn get_delimiter(matches: &ArgMatches) -> Delimiters {
@@ -411,7 +458,14 @@ fn get_delimiter(matches: &ArgMatches) -> Delimiters {
         .get_one::<String>(options::ALL_REPEATED)
         .or_else(|| matches.get_one::<String>(options::GROUP));
     if let Some(delimiter_arg) = value {
-        Delimiters::from_str(delimiter_arg).unwrap() // All possible values for ALL_REPEATED are Delimiters (of type `&str`)
+        match delimiter_arg.as_ref() {
+            "append" => Delimiters::Append,
+            "prepend" => Delimiters::Prepend,
+            "separate" => Delimiters::Separate,
+            "both" => Delimiters::Both,
+            "none" => Delimiters::None,
+            _ => unreachable!("Should have been caught by possible values in clap"),
+        }
     } else if matches.contains_id(options::GROUP) {
         Delimiters::Separate
     } else {
@@ -419,26 +473,26 @@ fn get_delimiter(matches: &ArgMatches) -> Delimiters {
     }
 }
 
-fn open_input_file(in_file_name: &str) -> UResult<BufReader<Box<dyn Read + 'static>>> {
-    let in_file = if in_file_name == "-" {
-        Box::new(stdin()) as Box<dyn Read>
-    } else {
-        let path = Path::new(in_file_name);
-        let in_file = File::open(path)
-            .map_err_context(|| format!("Could not open {}", in_file_name.maybe_quote()))?;
-        Box::new(in_file) as Box<dyn Read>
-    };
-    Ok(BufReader::new(in_file))
+// None or "-" means stdin.
+fn open_input_file(in_file_name: Option<&OsStr>) -> UResult<Box<dyn BufRead>> {
+    Ok(match in_file_name {
+        Some(path) if path != "-" => {
+            let in_file = File::open(path)
+                .map_err_context(|| format!("Could not open {}", path.maybe_quote()))?;
+            Box::new(BufReader::new(in_file))
+        }
+        _ => Box::new(stdin().lock()),
+    })
 }
 
-fn open_output_file(out_file_name: &str) -> UResult<BufWriter<Box<dyn Write + 'static>>> {
-    let out_file = if out_file_name == "-" {
-        Box::new(stdout()) as Box<dyn Write>
-    } else {
-        let path = Path::new(out_file_name);
-        let out_file = File::create(path)
-            .map_err_context(|| format!("Could not create {}", out_file_name.maybe_quote()))?;
-        Box::new(out_file) as Box<dyn Write>
-    };
-    Ok(BufWriter::new(out_file))
+// None or "-" means stdout.
+fn open_output_file(out_file_name: Option<&OsStr>) -> UResult<Box<dyn Write>> {
+    Ok(match out_file_name {
+        Some(path) if path != "-" => {
+            let out_file = File::create(path)
+                .map_err_context(|| format!("Could not open {}", path.maybe_quote()))?;
+            Box::new(BufWriter::new(out_file))
+        }
+        _ => Box::new(stdout().lock()),
+    })
 }

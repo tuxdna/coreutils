@@ -1,14 +1,12 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Anthony Deschamps <anthony.j.deschamps@gmail.com>
-// (c) Sylvestre Ledru <sylvestre@debian.org>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
 // spell-checker:ignore (chrono) Datelike Timelike ; (format) DATEFILE MMDDhhmm ; (vars) datetime datetimes
 
-use chrono::{DateTime, FixedOffset, Local, Offset, Utc};
+use chrono::format::{Item, StrftimeItems};
+use chrono::{DateTime, Duration, FixedOffset, Local, Offset, Utc};
 #[cfg(windows)]
 use chrono::{Datelike, Timelike};
 use clap::{crate_version, Arg, ArgAction, Command};
@@ -18,30 +16,24 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use uucore::display::Quotable;
-#[cfg(not(any(target_os = "macos", target_os = "redox")))]
+#[cfg(not(any(target_os = "redox")))]
 use uucore::error::FromIo;
 use uucore::error::{UResult, USimpleError};
-use uucore::{format_usage, show_error};
+use uucore::{format_usage, help_about, help_usage, show};
 #[cfg(windows)]
-use winapi::{
-    shared::minwindef::WORD,
-    um::{minwinbase::SYSTEMTIME, sysinfoapi::SetSystemTime},
-};
+use windows_sys::Win32::{Foundation::SYSTEMTIME, System::SystemInformation::SetSystemTime};
+
+use uucore::shortcut_value_parser::ShortcutValueParser;
 
 // Options
 const DATE: &str = "date";
 const HOURS: &str = "hours";
 const MINUTES: &str = "minutes";
 const SECONDS: &str = "seconds";
-const HOUR: &str = "hour";
-const MINUTE: &str = "minute";
-const SECOND: &str = "second";
 const NS: &str = "ns";
 
-const ABOUT: &str = "print or set the system date and time";
-const USAGE: &str = "\
-    {} [OPTION]... [+FORMAT]...
-    {} [OPTION]... [MMDDhhmm[[CC]YY][.ss]]";
+const ABOUT: &str = help_about!("date.md");
+const USAGE: &str = help_usage!("date.md");
 
 const OPT_DATE: &str = "date";
 const OPT_FORMAT: &str = "format";
@@ -100,6 +92,7 @@ enum DateSource {
     Now,
     Custom(String),
     File(PathBuf),
+    Human(Duration),
 }
 
 enum Iso8601Format {
@@ -113,13 +106,13 @@ enum Iso8601Format {
 impl<'a> From<&'a str> for Iso8601Format {
     fn from(s: &str) -> Self {
         match s {
-            HOURS | HOUR => Self::Hours,
-            MINUTES | MINUTE => Self::Minutes,
-            SECONDS | SECOND => Self::Seconds,
+            HOURS => Self::Hours,
+            MINUTES => Self::Minutes,
+            SECONDS => Self::Seconds,
             NS => Self::Ns,
             DATE => Self::Date,
-            // Should be caught by clap
-            _ => panic!("Invalid format: {}", s),
+            // Note: This is caught by clap via `possible_values`
+            _ => unreachable!(),
         }
     }
 }
@@ -134,15 +127,16 @@ impl<'a> From<&'a str> for Rfc3339Format {
     fn from(s: &str) -> Self {
         match s {
             DATE => Self::Date,
-            SECONDS | SECOND => Self::Seconds,
+            SECONDS => Self::Seconds,
             NS => Self::Ns,
             // Should be caught by clap
-            _ => panic!("Invalid format: {}", s),
+            _ => panic!("Invalid format: {s}"),
         }
     }
 }
 
 #[uucore::main]
+#[allow(clippy::cognitive_complexity)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
 
@@ -172,7 +166,13 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     };
 
     let date_source = if let Some(date) = matches.get_one::<String>(OPT_DATE) {
-        DateSource::Custom(date.into())
+        let ref_time = Local::now();
+        if let Ok(new_time) = parse_datetime::parse_datetime_at_date(ref_time, date.as_str()) {
+            let duration = new_time.signed_duration_since(ref_time);
+            DateSource::Human(duration)
+        } else {
+            DateSource::Custom(date.into())
+        }
     } else if let Some(file) = matches.get_one::<String>(OPT_FILE) {
         DateSource::File(file.into())
     } else {
@@ -207,9 +207,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
         return set_system_datetime(date);
     } else {
-        // Declare a file here because it needs to outlive the `dates` iterator.
-        let file: File;
-
         // Get the current time, either in the local time zone or UTC.
         let now: DateTime<FixedOffset> = if settings.utc {
             let now = Utc::now();
@@ -226,10 +223,35 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 let iter = std::iter::once(date);
                 Box::new(iter)
             }
+            DateSource::Human(relative_time) => {
+                // Get the current DateTime<FixedOffset> for things like "1 year ago"
+                let current_time = DateTime::<FixedOffset>::from(Local::now());
+                // double check the result is overflow or not of the current_time + relative_time
+                // it may cause a panic of chrono::datetime::DateTime add
+                match current_time.checked_add_signed(relative_time) {
+                    Some(date) => {
+                        let iter = std::iter::once(Ok(date));
+                        Box::new(iter)
+                    }
+                    None => {
+                        return Err(USimpleError::new(
+                            1,
+                            format!("invalid date {}", relative_time),
+                        ));
+                    }
+                }
+            }
             DateSource::File(ref path) => {
-                file = File::open(path).unwrap();
+                if path.is_dir() {
+                    return Err(USimpleError::new(
+                        2,
+                        format!("expected file, got directory {}", path.quote()),
+                    ));
+                }
+                let file = File::open(path)
+                    .map_err_context(|| path.as_os_str().to_string_lossy().to_string())?;
                 let lines = BufReader::new(file).lines();
-                let iter = lines.filter_map(Result::ok).map(parse_date);
+                let iter = lines.map_while(Result::ok).map(parse_date);
                 Box::new(iter)
             }
             DateSource::Now => {
@@ -246,10 +268,32 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 Ok(date) => {
                     // GNU `date` uses `%N` for nano seconds, however crate::chrono uses `%f`
                     let format_string = &format_string.replace("%N", "%f");
-                    let formatted = date.format(format_string).to_string().replace("%f", "%N");
-                    println!("{}", formatted);
+                    // Refuse to pass this string to chrono as it is crashing in this crate
+                    if format_string.contains("%#z") {
+                        return Err(USimpleError::new(
+                            1,
+                            format!("invalid format {}", format_string.replace("%f", "%N")),
+                        ));
+                    }
+                    // Hack to work around panic in chrono,
+                    // TODO - remove when a fix for https://github.com/chronotope/chrono/issues/623 is released
+                    let format_items = StrftimeItems::new(format_string);
+                    if format_items.clone().any(|i| i == Item::Error) {
+                        return Err(USimpleError::new(
+                            1,
+                            format!("invalid format {}", format_string.replace("%f", "%N")),
+                        ));
+                    }
+                    let formatted = date
+                        .format_with_items(format_items)
+                        .to_string()
+                        .replace("%f", "%N");
+                    println!("{formatted}");
                 }
-                Err((input, _err)) => show_error!("invalid date {}", input.quote()),
+                Err((input, _err)) => show!(USimpleError::new(
+                    1,
+                    format!("invalid date {}", input.quote())
+                )),
             }
         }
     }
@@ -283,6 +327,11 @@ pub fn uu_app() -> Command {
                 .short('I')
                 .long(OPT_ISO_8601)
                 .value_name("FMT")
+                .value_parser(ShortcutValueParser::new([
+                    DATE, HOURS, MINUTES, SECONDS, NS,
+                ]))
+                .num_args(0..=1)
+                .default_missing_value(OPT_DATE)
                 .help(ISO_8601_HELP_STRING),
         )
         .arg(
@@ -296,6 +345,7 @@ pub fn uu_app() -> Command {
             Arg::new(OPT_RFC_3339)
                 .long(OPT_RFC_3339)
                 .value_name("FMT")
+                .value_parser(ShortcutValueParser::new([DATE, SECONDS, NS]))
                 .help(RFC_3339_HELP_STRING),
         )
         .arg(
@@ -395,10 +445,10 @@ fn set_system_datetime(date: DateTime<Utc>) -> UResult<()> {
 
     let result = unsafe { clock_settime(CLOCK_REALTIME, &timespec) };
 
-    if result != 0 {
-        Err(std::io::Error::last_os_error().map_err_context(|| "cannot set date".to_string()))
-    } else {
+    if result == 0 {
         Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().map_err_context(|| "cannot set date".to_string()))
     }
 }
 
@@ -409,16 +459,16 @@ fn set_system_datetime(date: DateTime<Utc>) -> UResult<()> {
 /// https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-systemtime
 fn set_system_datetime(date: DateTime<Utc>) -> UResult<()> {
     let system_time = SYSTEMTIME {
-        wYear: date.year() as WORD,
-        wMonth: date.month() as WORD,
+        wYear: date.year() as u16,
+        wMonth: date.month() as u16,
         // Ignored
         wDayOfWeek: 0,
-        wDay: date.day() as WORD,
-        wHour: date.hour() as WORD,
-        wMinute: date.minute() as WORD,
-        wSecond: date.second() as WORD,
+        wDay: date.day() as u16,
+        wHour: date.hour() as u16,
+        wMinute: date.minute() as u16,
+        wSecond: date.second() as u16,
         // TODO: be careful of leap seconds - valid range is [0, 999] - how to handle?
-        wMilliseconds: ((date.nanosecond() / 1_000_000) % 1000) as WORD,
+        wMilliseconds: ((date.nanosecond() / 1_000_000) % 1000) as u16,
     };
 
     let result = unsafe { SetSystemTime(&system_time) };

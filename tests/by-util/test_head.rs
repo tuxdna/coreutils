@@ -1,11 +1,11 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (words) bogusfile emptyfile abcdefghijklmnopqrstuvwxyz abcdefghijklmnopqrstu
 
-use crate::common::util::*;
+use crate::common::util::TestScenario;
 
 static INPUT: &str = "lorem_ipsum.txt";
 
@@ -189,6 +189,15 @@ fn test_no_such_file_or_directory() {
         .stderr_contains("cannot open 'no_such_file.toml' for reading: No such file or directory");
 }
 
+#[test]
+fn test_lines_leading_zeros() {
+    new_ucmd!()
+        .arg("--lines=010")
+        .pipe_in("\n\n\n\n\n\n\n\n\n\n\n\n")
+        .succeeds()
+        .stdout_is("\n\n\n\n\n\n\n\n\n\n");
+}
+
 /// Test that each non-existent files gets its own error message printed.
 #[test]
 fn test_multiple_nonexistent_files() {
@@ -288,21 +297,25 @@ fn test_head_invalid_num() {
     new_ucmd!()
         .args(&["-c", "1024R", "emptyfile.txt"])
         .fails()
-        .stderr_is("head: invalid number of bytes: '1024R'");
+        .stderr_is(
+            "head: invalid number of bytes: '1024R': Value too large for defined data type\n",
+        );
     new_ucmd!()
         .args(&["-n", "1024R", "emptyfile.txt"])
         .fails()
-        .stderr_is("head: invalid number of lines: '1024R'");
+        .stderr_is(
+            "head: invalid number of lines: '1024R': Value too large for defined data type\n",
+        );
     #[cfg(not(target_pointer_width = "128"))]
     new_ucmd!()
         .args(&["-c", "1Y", "emptyfile.txt"])
         .fails()
-        .stderr_is("head: invalid number of bytes: '1Y': Value too large for defined data type");
+        .stderr_is("head: invalid number of bytes: '1Y': Value too large for defined data type\n");
     #[cfg(not(target_pointer_width = "128"))]
     new_ucmd!()
         .args(&["-n", "1Y", "emptyfile.txt"])
         .fails()
-        .stderr_is("head: invalid number of lines: '1Y': Value too large for defined data type");
+        .stderr_is("head: invalid number of lines: '1Y': Value too large for defined data type\n");
     #[cfg(target_pointer_width = "32")]
     {
         let sizes = ["1000G", "10T"];
@@ -317,13 +330,13 @@ fn test_head_invalid_num() {
             new_ucmd!()
                 .args(&["-c", size])
                 .fails()
-                .stderr_is("head: out of range integral type conversion attempted: number of bytes is too large");
+                .stderr_is("head: out of range integral type conversion attempted: number of bytes is too large\n");
         }
     }
     new_ucmd!()
         .args(&["-c", "-³"])
         .fails()
-        .stderr_is("head: invalid number of bytes: '³'");
+        .stderr_is("head: invalid number of bytes: '³'\n");
 }
 
 #[test]

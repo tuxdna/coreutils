@@ -1,6 +1,34 @@
-// spell-checker:ignore αbcdef
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+// spell-checker:ignore αbcdef ; (people) kkos
 
-use crate::common::util::*;
+use crate::common::util::TestScenario;
+
+#[test]
+fn test_simple_values() {
+    // null or 0 => EXIT_VALUE == 1
+    new_ucmd!().args(&[""]).fails().code_is(1).stdout_only("\n");
+    new_ucmd!()
+        .args(&["0"])
+        .fails()
+        .code_is(1)
+        .stdout_only("0\n");
+    new_ucmd!()
+        .args(&["00"])
+        .fails()
+        .code_is(1)
+        .stdout_only("00\n");
+    new_ucmd!()
+        .args(&["-0"])
+        .fails()
+        .code_is(1)
+        .stdout_only("-0\n");
+
+    // non-null and non-0 => EXIT_VALUE = 0
+    new_ucmd!().args(&["1"]).succeeds().stdout_only("1\n");
+}
 
 #[test]
 fn test_simple_arithmetic() {
@@ -12,7 +40,7 @@ fn test_simple_arithmetic() {
     new_ucmd!()
         .args(&["1", "-", "1"])
         .fails()
-        .status_code(1)
+        .code_is(1)
         .stdout_only("0\n");
 
     new_ucmd!()
@@ -85,6 +113,44 @@ fn test_or() {
         .args(&["foo", "|", "bar"])
         .succeeds()
         .stdout_only("foo\n");
+
+    new_ucmd!()
+        .args(&["14", "|", "1"])
+        .succeeds()
+        .stdout_only("14\n");
+
+    new_ucmd!()
+        .args(&["-14", "|", "1"])
+        .succeeds()
+        .stdout_only("-14\n");
+
+    new_ucmd!()
+        .args(&["1", "|", "a", "/", "5"])
+        .succeeds()
+        .stdout_only("1\n");
+
+    new_ucmd!()
+        .args(&["foo", "|", "a", "/", "5"])
+        .succeeds()
+        .stdout_only("foo\n");
+
+    new_ucmd!()
+        .args(&["0", "|", "10", "/", "5"])
+        .succeeds()
+        .stdout_only("2\n");
+
+    new_ucmd!()
+        .args(&["12", "|", "9a", "+", "1"])
+        .succeeds()
+        .stdout_only("12\n");
+
+    new_ucmd!().args(&["", "|", ""]).run().stdout_only("0\n");
+
+    new_ucmd!().args(&["", "|", "0"]).run().stdout_only("0\n");
+
+    new_ucmd!().args(&["", "|", "00"]).run().stdout_only("0\n");
+
+    new_ucmd!().args(&["", "|", "-0"]).run().stdout_only("0\n");
 }
 
 #[test]
@@ -94,7 +160,67 @@ fn test_and() {
         .succeeds()
         .stdout_only("foo\n");
 
-    new_ucmd!().args(&["", "&", "1"]).run().stdout_is("0\n");
+    new_ucmd!()
+        .args(&["14", "&", "1"])
+        .succeeds()
+        .stdout_only("14\n");
+
+    new_ucmd!()
+        .args(&["-14", "&", "1"])
+        .succeeds()
+        .stdout_only("-14\n");
+
+    new_ucmd!()
+        .args(&["-1", "&", "10", "/", "5"])
+        .succeeds()
+        .stdout_only("-1\n");
+
+    new_ucmd!()
+        .args(&["0", "&", "a", "/", "5"])
+        .run()
+        .stdout_only("0\n");
+
+    new_ucmd!()
+        .args(&["", "&", "a", "/", "5"])
+        .run()
+        .stdout_only("0\n");
+
+    new_ucmd!().args(&["", "&", "1"]).run().stdout_only("0\n");
+
+    new_ucmd!().args(&["", "&", ""]).run().stdout_only("0\n");
+}
+
+#[test]
+fn test_index() {
+    new_ucmd!()
+        .args(&["index", "αbcdef", "x"])
+        .fails()
+        .code_is(1)
+        .stdout_only("0\n");
+    new_ucmd!()
+        .args(&["index", "αbcdef", "α"])
+        .succeeds()
+        .stdout_only("1\n");
+    new_ucmd!()
+        .args(&["index", "αbc_δef", "δ"])
+        .succeeds()
+        .stdout_only("5\n");
+    new_ucmd!()
+        .args(&["index", "αbc_δef", "δf"])
+        .succeeds()
+        .stdout_only("5\n");
+    new_ucmd!()
+        .args(&["index", "αbcdef", "fb"])
+        .succeeds()
+        .stdout_only("2\n");
+    new_ucmd!()
+        .args(&["index", "αbcdef", "f"])
+        .succeeds()
+        .stdout_only("6\n");
+    new_ucmd!()
+        .args(&["index", "αbcdef_f", "f"])
+        .succeeds()
+        .stdout_only("6\n");
 }
 
 #[test]
@@ -119,6 +245,27 @@ fn test_length_mb() {
 }
 
 #[test]
+fn test_regex() {
+    // FixME: [2022-12-19; rivy] test disabled as it currently fails due to 'oniguruma' bug (see GH:kkos/oniguruma/issues/279)
+    // new_ucmd!()
+    //     .args(&["a^b", ":", "a^b"])
+    //     .succeeds()
+    //     .stdout_only("3\n");
+    new_ucmd!()
+        .args(&["a^b", ":", "a\\^b"])
+        .succeeds()
+        .stdout_only("3\n");
+    new_ucmd!()
+        .args(&["a$b", ":", "a\\$b"])
+        .succeeds()
+        .stdout_only("3\n");
+    new_ucmd!()
+        .args(&["-5", ":", "-\\{0,1\\}[0-9]*$"])
+        .succeeds()
+        .stdout_only("2\n");
+}
+
+#[test]
 fn test_substr() {
     new_ucmd!()
         .args(&["substr", "abc", "1", "1"])
@@ -131,18 +278,51 @@ fn test_invalid_substr() {
     new_ucmd!()
         .args(&["substr", "abc", "0", "1"])
         .fails()
-        .status_code(1)
+        .code_is(1)
         .stdout_only("\n");
 
     new_ucmd!()
         .args(&["substr", "abc", &(std::usize::MAX.to_string() + "0"), "1"])
         .fails()
-        .status_code(1)
+        .code_is(1)
         .stdout_only("\n");
 
     new_ucmd!()
         .args(&["substr", "abc", "0", &(std::usize::MAX.to_string() + "0")])
         .fails()
-        .status_code(1)
+        .code_is(1)
         .stdout_only("\n");
+}
+
+#[test]
+fn test_escape() {
+    new_ucmd!().args(&["+", "1"]).succeeds().stdout_only("1\n");
+
+    new_ucmd!()
+        .args(&["1", "+", "+", "1"])
+        .succeeds()
+        .stdout_only("2\n");
+
+    new_ucmd!()
+        .args(&["2", "*", "+", "3"])
+        .succeeds()
+        .stdout_only("6\n");
+
+    new_ucmd!()
+        .args(&["(", "1", ")", "+", "1"])
+        .succeeds()
+        .stdout_only("2\n");
+}
+
+#[test]
+fn test_invalid_syntax() {
+    let invalid_syntaxes = [["12", "12"], ["12", "|"], ["|", "12"]];
+
+    for invalid_syntax in invalid_syntaxes {
+        new_ucmd!()
+            .args(&invalid_syntax)
+            .fails()
+            .code_is(2)
+            .stderr_contains("syntax error");
+    }
 }

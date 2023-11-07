@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Alex Lyon <arcterus@mail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) sbytes slen dlen memmem memmap Mmap mmap SIGBUS
 mod error;
@@ -19,13 +17,12 @@ use std::{
 use uucore::display::Quotable;
 use uucore::error::UError;
 use uucore::error::UResult;
-use uucore::{format_usage, show};
+use uucore::{format_usage, help_about, help_usage, show};
 
 use crate::error::TacError;
 
-static NAME: &str = "tac";
-static USAGE: &str = "{} [OPTION]... [FILE]...";
-static ABOUT: &str = "Write each file to standard output, last line first.";
+static USAGE: &str = help_usage!("tac.md");
+static ABOUT: &str = help_about!("tac.md");
 
 mod options {
     pub static BEFORE: &str = "before";
@@ -62,7 +59,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
-        .name(NAME)
         .version(crate_version!())
         .override_usage(format_usage(USAGE))
         .about(ABOUT)
@@ -224,6 +220,7 @@ fn buffer_tac(data: &[u8], before: bool, separator: &str) -> std::io::Result<()>
     Ok(())
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn tac(filenames: &[&str], before: bool, regex: bool, separator: &str) -> UResult<()> {
     // Compile the regular expression pattern if it is provided.
     let maybe_pattern = if regex {

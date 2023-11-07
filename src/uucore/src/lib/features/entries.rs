@@ -1,7 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -168,10 +166,10 @@ pub struct Passwd {
 /// SAFETY: ptr must point to a valid C string.
 /// Returns None if ptr is null.
 unsafe fn cstr2string(ptr: *const c_char) -> Option<String> {
-    if !ptr.is_null() {
-        Some(CStr::from_ptr(ptr).to_string_lossy().into_owned())
-    } else {
+    if ptr.is_null() {
         None
+    } else {
+        Some(CStr::from_ptr(ptr).to_string_lossy().into_owned())
     }
 }
 
@@ -220,7 +218,7 @@ impl Passwd {
         let mut ngroups: c_int = 8;
         let mut ngroups_old: c_int;
         let mut groups = vec![0; ngroups.try_into().unwrap()];
-        let name = CString::new(self.name.clone()).unwrap();
+        let name = CString::new(self.name.as_bytes()).unwrap();
         loop {
             ngroups_old = ngroups;
             if unsafe { getgrouplist(name.as_ptr(), self.gid, groups.as_mut_ptr(), &mut ngroups) }
@@ -321,7 +319,8 @@ macro_rules! f {
                 } else {
                     // SAFETY: We're holding PW_LOCK.
                     unsafe {
-                        let data = $fnam(CString::new(k).unwrap().as_ptr());
+                        let cstring = CString::new(k).unwrap();
+                        let data = $fnam(cstring.as_ptr());
                         if !data.is_null() {
                             Ok($st::from_raw(ptr::read(data as *const _)))
                         } else {

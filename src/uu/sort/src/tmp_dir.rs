@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use std::{
     fs::File,
     path::{Path, PathBuf},
@@ -5,7 +9,10 @@ use std::{
 };
 
 use tempfile::TempDir;
-use uucore::error::{UResult, USimpleError};
+use uucore::{
+    error::{UResult, USimpleError},
+    show_error,
+};
 
 use crate::SortError;
 
@@ -28,7 +35,7 @@ impl TmpDirWrapper {
             parent_path: path,
             size: 0,
             temp_dir: None,
-            lock: Default::default(),
+            lock: Arc::default(),
         }
     }
 
@@ -53,7 +60,7 @@ impl TmpDirWrapper {
             }
             std::process::exit(2)
         })
-        .map_err(|e| USimpleError::new(2, format!("failed to set up signal handler: {}", e)))
+        .map_err(|e| USimpleError::new(2, format!("failed to set up signal handler: {e}")))
     }
 
     pub fn next_file(&mut self) -> UResult<(File, PathBuf)> {

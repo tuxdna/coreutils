@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use std::cmp::max;
 use std::ops::{Add, AddAssign};
 
@@ -28,20 +32,4 @@ impl AddAssign for WordCount {
     fn add_assign(&mut self, other: Self) {
         *self = *self + other;
     }
-}
-
-impl WordCount {
-    pub fn with_title(self, title: Option<String>) -> TitledWordCount {
-        TitledWordCount { title, count: self }
-    }
-}
-
-/// This struct supplements the actual word count with an optional title that is
-/// displayed to the user at the end of the program.
-/// The reason we don't simply include title in the `WordCount` struct is that
-/// it would result in unnecessary copying of `String`.
-#[derive(Debug, Default, Clone)]
-pub struct TitledWordCount {
-    pub title: Option<String>,
-    pub count: WordCount,
 }

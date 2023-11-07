@@ -1,10 +1,7 @@
-// * This file is part of the uutils coreutils package.
-// *
-// * (c) 2020 Alex Lyon  <arcterus@mail.com>
-// * (c) 2020 nicoo      <nicoo@debian.org>
-// *
-// * For the full copyright and license information, please view the LICENSE file
-// * that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 use super::*;
 
@@ -82,10 +79,10 @@ impl<T: DoubleInt> Montgomery<T> {
         // (x + n*m) / R
         // in case of overflow, this is (2¹²⁸ + xnm)/2⁶⁴ - n = xnm/2⁶⁴ + (2⁶⁴ - n)
         let y = T::from_double_width(xnm >> t_bits)
-            + if !overflow {
-                T::zero()
-            } else {
+            + if overflow {
                 n.wrapping_neg()
+            } else {
+                T::zero()
             };
 
         if y >= *n {
@@ -132,10 +129,10 @@ impl<T: DoubleInt> Arithmetic for Montgomery<T> {
         let (r, overflow) = a.overflowing_add(&b);
 
         // In case of overflow, a+b = 2⁶⁴ + r = (2⁶⁴ - n) + r (working mod n)
-        let r = if !overflow {
-            r
-        } else {
+        let r = if overflow {
             r + self.n.wrapping_neg()
+        } else {
+            r
         };
 
         // Normalize to [0; n[
@@ -182,8 +179,6 @@ impl<T: DoubleInt> Arithmetic for Montgomery<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parametrized_check;
-
     fn test_add<A: DoubleInt>() {
         for n in 0..100 {
             let n = 2 * n + 1;
@@ -192,13 +187,22 @@ mod tests {
                 let m_x = m.to_mod(x);
                 for y in 0..=x {
                     let m_y = m.to_mod(y);
-                    println!("{n:?}, {x:?}, {y:?}", n = n, x = x, y = y);
+                    println!("{n:?}, {x:?}, {y:?}");
                     assert_eq!((x + y) % n, m.to_u64(m.add(m_x, m_y)));
                 }
             }
         }
     }
-    parametrized_check!(test_add);
+
+    #[test]
+    fn add_u32() {
+        test_add::<u32>();
+    }
+
+    #[test]
+    fn add_u64() {
+        test_add::<u64>();
+    }
 
     fn test_multiplication<A: DoubleInt>() {
         for n in 0..100 {
@@ -213,7 +217,16 @@ mod tests {
             }
         }
     }
-    parametrized_check!(test_multiplication);
+
+    #[test]
+    fn multiplication_u32() {
+        test_multiplication::<u32>();
+    }
+
+    #[test]
+    fn multiplication_u64() {
+        test_multiplication::<u64>();
+    }
 
     fn test_roundtrip<A: DoubleInt>() {
         for n in 0..100 {
@@ -225,5 +238,14 @@ mod tests {
             }
         }
     }
-    parametrized_check!(test_roundtrip);
+
+    #[test]
+    fn roundtrip_u32() {
+        test_roundtrip::<u32>();
+    }
+
+    #[test]
+    fn roundtrip_u64() {
+        test_roundtrip::<u64>();
+    }
 }

@@ -1,6 +1,10 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use std::str::from_utf8;
 
-use crate::formatteriteminfo::*;
+use crate::formatteriteminfo::{FormatWriter, FormatterItemInfo};
 
 pub static FORMAT_ITEM_A: FormatterItemInfo = FormatterItemInfo {
     byte_size: 1,
@@ -48,8 +52,8 @@ fn format_item_c(bytes: &[u8]) -> String {
 
     if b & 0x80 == 0x00 {
         match C_CHARS.get(b as usize) {
-            Some(s) => format!("{:>4}", s),
-            None => format!("{:>4}", b),
+            Some(s) => format!("{s:>4}"),
+            None => format!("{b:>4}"),
         }
     } else if (b & 0xc0) == 0x80 {
         // second or subsequent octet of an utf-8 sequence
@@ -57,24 +61,24 @@ fn format_item_c(bytes: &[u8]) -> String {
     } else if ((b & 0xe0) == 0xc0) && (bytes.len() >= 2) {
         // start of a 2 octet utf-8 sequence
         match from_utf8(&bytes[0..2]) {
-            Ok(s) => format!("{:>4}", s),
-            Err(_) => format!(" {:03o}", b),
+            Ok(s) => format!("{s:>4}"),
+            Err(_) => format!(" {b:03o}"),
         }
     } else if ((b & 0xf0) == 0xe0) && (bytes.len() >= 3) {
         // start of a 3 octet utf-8 sequence
         match from_utf8(&bytes[0..3]) {
-            Ok(s) => format!("{:>4}", s),
-            Err(_) => format!(" {:03o}", b),
+            Ok(s) => format!("{s:>4}"),
+            Err(_) => format!(" {b:03o}"),
         }
     } else if ((b & 0xf8) == 0xf0) && (bytes.len() >= 4) {
         // start of a 4 octet utf-8 sequence
         match from_utf8(&bytes[0..4]) {
-            Ok(s) => format!("{:>4}", s),
-            Err(_) => format!(" {:03o}", b),
+            Ok(s) => format!("{s:>4}"),
+            Err(_) => format!(" {b:03o}"),
         }
     } else {
         // invalid utf-8
-        format!(" {:03o}", b)
+        format!(" {b:03o}")
     }
 }
 
@@ -82,7 +86,7 @@ pub fn format_ascii_dump(bytes: &[u8]) -> String {
     let mut result = String::new();
 
     result.push('>');
-    for c in bytes.iter() {
+    for c in bytes {
         if *c >= 0x20 && *c <= 0x7e {
             result.push_str(C_CHARS[*c as usize]);
         } else {
@@ -95,6 +99,7 @@ pub fn format_ascii_dump(bytes: &[u8]) -> String {
 }
 
 #[test]
+#[allow(clippy::cognitive_complexity)]
 fn test_format_item_a() {
     assert_eq!(" nul", format_item_a(0x00));
     assert_eq!(" soh", format_item_a(0x01));
@@ -110,6 +115,7 @@ fn test_format_item_a() {
 }
 
 #[test]
+#[allow(clippy::cognitive_complexity)]
 fn test_format_item_c() {
     assert_eq!("  \\0", format_item_c(&[0x00]));
     assert_eq!(" 001", format_item_c(&[0x01]));

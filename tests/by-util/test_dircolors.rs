@@ -1,8 +1,11 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore overridable
-use crate::common::util::*;
+use crate::common::util::TestScenario;
 
-extern crate dircolors;
-use self::dircolors::{guess_syntax, OutputFmt, StrUtils};
+use dircolors::{guess_syntax, OutputFmt, StrUtils};
 
 #[test]
 fn test_invalid_arg() {
@@ -210,14 +213,24 @@ fn test_helper(file_name: &str, term: &str) {
     new_ucmd!()
         .env("TERM", term)
         .arg("-c")
-        .arg(format!("{}.txt", file_name))
+        .arg(format!("{file_name}.txt"))
         .run()
-        .stdout_is_fixture(format!("{}.csh.expected", file_name));
+        .stdout_is_fixture(format!("{file_name}.csh.expected"));
 
     new_ucmd!()
         .env("TERM", term)
         .arg("-b")
-        .arg(format!("{}.txt", file_name))
+        .arg(format!("{file_name}.txt"))
         .run()
-        .stdout_is_fixture(format!("{}.sh.expected", file_name));
+        .stdout_is_fixture(format!("{file_name}.sh.expected"));
+}
+
+#[test]
+fn test_dircolors_for_dir_as_file() {
+    let result = new_ucmd!().args(&["-c", "/"]).fails();
+    result.no_stdout();
+    assert_eq!(
+        result.stderr_str().trim(),
+        "dircolors: expected file, got directory '/'",
+    );
 }

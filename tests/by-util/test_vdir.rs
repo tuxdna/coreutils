@@ -1,11 +1,9 @@
-#[cfg(not(windows))]
-extern crate libc;
-extern crate regex;
-#[cfg(not(windows))]
-extern crate tempfile;
-
-use self::regex::Regex;
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
+use regex::Regex;
 
 /*
  * As vdir use the same functions than ls, we don't have to retest them here.
@@ -29,7 +27,7 @@ fn test_default_output() {
     scene
         .ucmd()
         .succeeds()
-        .stdout_matches(&Regex::new("[rwx-]{10}.*some-file1$").unwrap());
+        .stdout_matches(&Regex::new("[rwx-]{10}.*some-file1\n$").unwrap());
 }
 
 #[test]

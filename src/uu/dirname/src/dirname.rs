@@ -1,7 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Derek Chiang <derekchiang93@gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -9,42 +7,35 @@ use clap::{crate_version, Arg, ArgAction, Command};
 use std::path::Path;
 use uucore::display::print_verbatim;
 use uucore::error::{UResult, UUsageError};
-use uucore::format_usage;
+use uucore::line_ending::LineEnding;
+use uucore::{format_usage, help_about, help_section, help_usage};
 
-static ABOUT: &str = "strip last component from file name";
-const USAGE: &str = "{} [OPTION] NAME...";
+const ABOUT: &str = help_about!("dirname.md");
+const USAGE: &str = help_usage!("dirname.md");
+const AFTER_HELP: &str = help_section!("after help", "dirname.md");
 
 mod options {
     pub const ZERO: &str = "zero";
     pub const DIR: &str = "dir";
 }
 
-fn get_long_usage() -> &'static str {
-    "Output each NAME with its last non-slash component and trailing slashes \n\
-        removed; if NAME contains no /'s, output '.' (meaning the current directory)."
-}
-
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let args = args.collect_lossy();
 
-    let matches = uu_app()
-        .after_help(get_long_usage())
-        .try_get_matches_from(args)?;
+    let matches = uu_app().after_help(AFTER_HELP).try_get_matches_from(args)?;
 
-    let separator = if matches.get_flag(options::ZERO) {
-        "\0"
-    } else {
-        "\n"
-    };
+    let line_ending = LineEnding::from_zero_flag(matches.get_flag(options::ZERO));
 
     let dirnames: Vec<String> = matches
         .get_many::<String>(options::DIR)
         .unwrap_or_default()
-        .map(|s| s.to_owned())
+        .cloned()
         .collect();
 
-    if !dirnames.is_empty() {
+    if dirnames.is_empty() {
+        return Err(UUsageError::new(1, "missing operand"));
+    } else {
         for path in &dirnames {
             let p = Path::new(path);
             match p.parent() {
@@ -63,10 +54,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                     }
                 }
             }
-            print!("{}", separator);
+            print!("{line_ending}");
         }
-    } else {
-        return Err(UUsageError::new(1, "missing operand"));
     }
 
     Ok(())

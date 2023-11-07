@@ -1,14 +1,9 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Nicholas Juszczak <juszczakn@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) ugoa cmode
-
-#[macro_use]
-extern crate uucore;
 
 use clap::builder::ValueParser;
 use clap::parser::ValuesRef;
@@ -18,25 +13,22 @@ use std::path::{Path, PathBuf};
 #[cfg(not(windows))]
 use uucore::error::FromIo;
 use uucore::error::{UResult, USimpleError};
-use uucore::format_usage;
 #[cfg(not(windows))]
 use uucore::mode;
 use uucore::{display::Quotable, fs::dir_strip_dot_for_creation};
+use uucore::{format_usage, help_about, help_section, help_usage, show, show_if_err};
 
-static DEFAULT_PERM: u32 = 0o755;
+static DEFAULT_PERM: u32 = 0o777;
 
-static ABOUT: &str = "Create the given DIRECTORY(ies) if they do not exist";
-const USAGE: &str = "{} [OPTION]... [USER]";
+const ABOUT: &str = help_about!("mkdir.md");
+const USAGE: &str = help_usage!("mkdir.md");
+const AFTER_HELP: &str = help_section!("after help", "mkdir.md");
 
 mod options {
     pub const MODE: &str = "mode";
     pub const PARENTS: &str = "parents";
     pub const VERBOSE: &str = "verbose";
     pub const DIRS: &str = "dirs";
-}
-
-fn get_long_usage() -> &'static str {
-    "Each MODE is of the form '[ugoa]*([-+=]([rwxXst]*|[ugo]))+|[-+=]?[0-7]+'."
 }
 
 #[cfg(windows)]
@@ -46,31 +38,27 @@ fn get_mode(_matches: &ArgMatches, _mode_had_minus_prefix: bool) -> Result<u32, 
 
 #[cfg(not(windows))]
 fn get_mode(matches: &ArgMatches, mode_had_minus_prefix: bool) -> Result<u32, String> {
-    let digits: &[char] = &['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-    // Translate a ~str in octal form to u16, default to 755
     // Not tested on Windows
     let mut new_mode = DEFAULT_PERM;
-    match matches.get_one::<String>(options::MODE) {
-        Some(m) => {
-            for mode in m.split(',') {
-                if mode.contains(digits) {
-                    new_mode = mode::parse_numeric(new_mode, m, true)?;
+
+    if let Some(m) = matches.get_one::<String>(options::MODE) {
+        for mode in m.split(',') {
+            if mode.chars().any(|c| c.is_ascii_digit()) {
+                new_mode = mode::parse_numeric(new_mode, m, true)?;
+            } else {
+                let cmode = if mode_had_minus_prefix {
+                    // clap parsing is finished, now put prefix back
+                    format!("-{mode}")
                 } else {
-                    let cmode = if mode_had_minus_prefix {
-                        // clap parsing is finished, now put prefix back
-                        format!("-{}", mode)
-                    } else {
-                        mode.to_string()
-                    };
-                    new_mode = mode::parse_symbolic(new_mode, &cmode, mode::get_umask(), true)?;
-                }
+                    mode.to_string()
+                };
+                new_mode = mode::parse_symbolic(new_mode, &cmode, mode::get_umask(), true)?;
             }
-            Ok(new_mode)
         }
-        None => {
-            // If no mode argument is specified return the mode derived from umask
-            Ok(!mode::get_umask() & 0o0777)
-        }
+        Ok(new_mode)
+    } else {
+        // If no mode argument is specified return the mode derived from umask
+        Ok(!mode::get_umask() & 0o0777)
     }
 }
 
@@ -95,9 +83,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Linux-specific options, not implemented
     // opts.optflag("Z", "context", "set SELinux security context" +
     // " of each created directory to CTX"),
-    let matches = uu_app()
-        .after_help(get_long_usage())
-        .try_get_matches_from(args)?;
+    let matches = uu_app().after_help(AFTER_HELP).try_get_matches_from(args)?;
 
     let dirs = matches
         .get_many::<OsString>(options::DIRS)
@@ -151,22 +137,35 @@ pub fn uu_app() -> Command {
  */
 fn exec(dirs: ValuesRef<OsString>, recursive: bool, mode: u32, verbose: bool) -> UResult<()> {
     for dir in dirs {
-        // Special case to match GNU's behavior:
-        // mkdir -p foo/. should work and just create foo/
-        // std::fs::create_dir("foo/."); fails in pure Rust
-        let path = if recursive {
-            dir_strip_dot_for_creation(&PathBuf::from(dir))
-        } else {
-            // Normal case
-            PathBuf::from(dir)
-        };
-        show_if_err!(mkdir(path.as_path(), recursive, mode, verbose));
+        let path_buf = PathBuf::from(dir);
+        let path = path_buf.as_path();
+
+        show_if_err!(mkdir(path, recursive, mode, verbose));
     }
     Ok(())
 }
 
-fn mkdir(path: &Path, recursive: bool, mode: u32, verbose: bool) -> UResult<()> {
-    create_dir(path, recursive, verbose)?;
+/// Create directory at a given `path`.
+///
+/// ## Options
+///
+/// * `recursive` --- create parent directories for the `path`, if they do not
+///     exist.
+/// * `mode` --- file mode for the directories (not implemented on windows).
+/// * `verbose` --- print a message for each printed directory.
+///
+/// ## Trailing dot
+///
+/// To match the GNU behavior, a path with the last directory being a single dot
+/// (like `some/path/to/.`) is created (with the dot stripped).
+pub fn mkdir(path: &Path, recursive: bool, mode: u32, verbose: bool) -> UResult<()> {
+    // Special case to match GNU's behavior:
+    // mkdir -p foo/. should work and just create foo/
+    // std::fs::create_dir("foo/."); fails in pure Rust
+    let path_buf = dir_strip_dot_for_creation(path);
+    let path = path_buf.as_path();
+
+    create_dir(path, recursive, verbose, false)?;
     chmod(path, mode)
 }
 
@@ -187,7 +186,9 @@ fn chmod(_path: &Path, _mode: u32) -> UResult<()> {
     Ok(())
 }
 
-fn create_dir(path: &Path, recursive: bool, verbose: bool) -> UResult<()> {
+// `is_parent` argument is not used on windows
+#[allow(unused_variables)]
+fn create_dir(path: &Path, recursive: bool, verbose: bool, is_parent: bool) -> UResult<()> {
     if path.exists() && !recursive {
         return Err(USimpleError::new(
             1,
@@ -200,7 +201,7 @@ fn create_dir(path: &Path, recursive: bool, verbose: bool) -> UResult<()> {
 
     if recursive {
         match path.parent() {
-            Some(p) => create_dir(p, recursive, verbose)?,
+            Some(p) => create_dir(p, recursive, verbose, true)?,
             None => {
                 USimpleError::new(1, "failed to create whole tree");
             }
@@ -214,6 +215,12 @@ fn create_dir(path: &Path, recursive: bool, verbose: bool) -> UResult<()> {
                     uucore::util_name(),
                     path.quote()
                 );
+            }
+            #[cfg(not(windows))]
+            if is_parent {
+                // directories created by -p have permission bits set to '=rwx,u+wx',
+                // which is umask modified by 'u+wx'
+                chmod(path, (!mode::get_umask() & 0o0777) | 0o0300)?;
             }
             Ok(())
         }

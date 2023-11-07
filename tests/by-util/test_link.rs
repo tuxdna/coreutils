@@ -1,4 +1,8 @@
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
 
 #[test]
 fn test_invalid_arg() {
@@ -29,7 +33,7 @@ fn test_link_no_circular() {
 
     ucmd.args(&[link, link])
         .fails()
-        .stderr_is("link: cannot create link 'test_link_no_circular' to 'test_link_no_circular': No such file or directory");
+        .stderr_is("link: cannot create link 'test_link_no_circular' to 'test_link_no_circular': No such file or directory\n");
     assert!(!at.file_exists(link));
 }
 
@@ -41,7 +45,7 @@ fn test_link_nonexistent_file() {
 
     ucmd.args(&[file, link])
         .fails()
-        .stderr_only("link: cannot create link 'test_link_nonexistent_file_link' to 'test_link_nonexistent_file': No such file or directory");
+        .stderr_only("link: cannot create link 'test_link_nonexistent_file_link' to 'test_link_nonexistent_file': No such file or directory\n");
     assert!(!at.file_exists(file));
     assert!(!at.file_exists(link));
 }
@@ -52,18 +56,18 @@ fn test_link_one_argument() {
     let file = "test_link_argument";
     ucmd.args(&[file])
         .fails()
-        .stderr_contains("requires 2 values");
+        .stderr_contains("2 values required");
 }
 
 #[test]
 fn test_link_three_arguments() {
     let (_, mut ucmd) = at_and_ucmd!();
-    let arguments = vec![
+    let arguments = [
         "test_link_argument1",
         "test_link_argument2",
         "test_link_argument3",
     ];
     ucmd.args(&arguments[..])
         .fails()
-        .stderr_contains("requires 2 values");
+        .stderr_contains("2 values required");
 }

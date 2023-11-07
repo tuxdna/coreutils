@@ -1,18 +1,17 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+
 // spell-checker:ignore abcdefghijklmnopqrstuvwxyz
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
 
-extern crate unindent;
-
-use self::unindent::*;
-use crate::common::util::*;
+use crate::common::util::TestScenario;
 use std::env;
 use std::fs::remove_file;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use unindent::unindent;
 
 // octal dump of 'abcdefghijklmnopqrstuvwxyz\n'     // spell-checker:disable-line
 static ALPHA_OUT: &str = "
@@ -76,7 +75,7 @@ fn test_2files() {
     let file2 = tmpdir.join("test2");
 
     for (n, a) in [(1, "a"), (2, "b")] {
-        println!("number: {} letter:{}", n, a);
+        println!("number: {n} letter:{a}");
     }
 
     // spell-checker:disable-next-line
@@ -630,6 +629,35 @@ fn test_skip_bytes() {
 }
 
 #[test]
+fn test_skip_bytes_hex() {
+    let input = "abcdefghijklmnopq"; // spell-checker:disable-line
+    new_ucmd!()
+        .arg("-c")
+        .arg("--skip-bytes=0xB")
+        .run_piped_stdin(input.as_bytes())
+        .no_stderr()
+        .success()
+        .stdout_is(unindent(
+            "
+            0000013   l   m   n   o   p   q
+            0000021
+            ",
+        ));
+    new_ucmd!()
+        .arg("-c")
+        .arg("--skip-bytes=0xE")
+        .run_piped_stdin(input.as_bytes())
+        .no_stderr()
+        .success()
+        .stdout_is(unindent(
+            "
+            0000016   o   p   q
+            0000021
+            ",
+        ));
+}
+
+#[test]
 fn test_skip_bytes_error() {
     let input = "12345";
     new_ucmd!()
@@ -849,31 +877,27 @@ fn test_od_invalid_bytes() {
     ];
     for option in &options {
         new_ucmd!()
-            .arg(format!("{}={}", option, INVALID_SIZE))
+            .arg(format!("{option}={INVALID_SIZE}"))
             .arg("file")
             .fails()
             .code_is(1)
-            .stderr_only(format!(
-                "od: invalid {} argument '{}'",
-                option, INVALID_SIZE
-            ));
+            .stderr_only(format!("od: invalid {option} argument '{INVALID_SIZE}'\n"));
 
         new_ucmd!()
-            .arg(format!("{}={}", option, INVALID_SUFFIX))
+            .arg(format!("{option}={INVALID_SUFFIX}"))
             .arg("file")
             .fails()
             .code_is(1)
             .stderr_only(format!(
-                "od: invalid suffix in {} argument '{}'",
-                option, INVALID_SUFFIX
+                "od: invalid suffix in {option} argument '{INVALID_SUFFIX}'\n"
             ));
 
         #[cfg(not(target_pointer_width = "128"))]
         new_ucmd!()
-            .arg(format!("{}={}", option, BIG_SIZE))
+            .arg(format!("{option}={BIG_SIZE}"))
             .arg("file")
             .fails()
             .code_is(1)
-            .stderr_only(format!("od: {} argument '{}' too large", option, BIG_SIZE));
+            .stderr_only(format!("od: {option} argument '{BIG_SIZE}' too large\n"));
     }
 }

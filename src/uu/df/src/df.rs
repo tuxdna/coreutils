@@ -1,10 +1,7 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Fangxu Hu <framlog@gmail.com>
-// (c) Sylvestre Ledru <sylvestre@debian.org>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore itotal iused iavail ipcent pcent tmpfs squashfs lofs
 mod blocks;
 mod columns;
@@ -19,7 +16,7 @@ use uucore::error::FromIo;
 use uucore::error::{UError, UResult, USimpleError};
 use uucore::fsext::{read_fs_list, MountInfo};
 use uucore::parse_size::ParseSizeError;
-use uucore::{format_usage, show};
+use uucore::{format_usage, help_about, help_section, help_usage, show};
 
 use clap::{crate_version, parser::ValueSource, Arg, ArgAction, ArgMatches, Command};
 
@@ -33,16 +30,9 @@ use crate::columns::{Column, ColumnError};
 use crate::filesystem::Filesystem;
 use crate::table::Table;
 
-static ABOUT: &str = "Show information about the file system on which each FILE resides,\n\
-                      or all file systems by default.";
-const USAGE: &str = "{} [OPTION]... [FILE]...";
-const LONG_HELP: &str = "Display values are in units of the first available SIZE from --block-size,
-and the DF_BLOCK_SIZE, BLOCK_SIZE and BLOCKSIZE environment variables.
-Otherwise, units default to 1024 bytes (or 512 if POSIXLY_CORRECT is set).
-
-SIZE is an integer and optional unit (example: 10M is 10*1024*1024).
-Units are K, M, G, T, P, E, Z, Y (powers of 1024) or KB, MB,... (powers
-of 1000).";
+const ABOUT: &str = help_about!("df.md");
+const USAGE: &str = help_usage!("df.md");
+const AFTER_HELP: &str = help_section!("after help", "df.md");
 
 static OPT_HELP: &str = "help";
 static OPT_ALL: &str = "all";
@@ -105,11 +95,11 @@ impl Default for Options {
         Self {
             show_local_fs: Default::default(),
             show_all_fs: Default::default(),
-            block_size: Default::default(),
-            human_readable: Default::default(),
-            header_mode: Default::default(),
-            include: Default::default(),
-            exclude: Default::default(),
+            block_size: BlockSize::default(),
+            human_readable: Option::default(),
+            header_mode: HeaderMode::default(),
+            include: Option::default(),
+            exclude: Option::default(),
             sync: Default::default(),
             show_total: Default::default(),
             columns: vec![
@@ -146,10 +136,10 @@ impl fmt::Display for OptionsError {
             }
             // TODO This needs to vary based on whether `--block-size`
             // or `-B` were provided.
-            Self::InvalidBlockSize(s) => write!(f, "invalid --block-size argument {}", s),
+            Self::InvalidBlockSize(s) => write!(f, "invalid --block-size argument {s}"),
             // TODO This needs to vary based on whether `--block-size`
             // or `-B` were provided.
-            Self::InvalidSuffix(s) => write!(f, "invalid suffix in --block-size argument {}", s),
+            Self::InvalidSuffix(s) => write!(f, "invalid suffix in --block-size argument {s}"),
             Self::ColumnError(ColumnError::MultipleColumns(s)) => write!(
                 f,
                 "option --output: field {} used more than once",
@@ -240,7 +230,7 @@ impl Options {
             }
         }
 
-        (!intersected_types.is_empty()).then(|| intersected_types)
+        (!intersected_types.is_empty()).then_some(intersected_types)
     }
 }
 
@@ -487,7 +477,7 @@ pub fn uu_app() -> Command {
         .version(crate_version!())
         .about(ABOUT)
         .override_usage(format_usage(USAGE))
-        .after_help(LONG_HELP)
+        .after_help(AFTER_HELP)
         .infer_long_args(true)
         .disable_help_flag(true)
         .arg(
@@ -509,7 +499,7 @@ pub fn uu_app() -> Command {
                 .short('B')
                 .long("block-size")
                 .value_name("SIZE")
-                .overrides_with_all(&[OPT_KILO, OPT_BLOCKSIZE])
+                .overrides_with_all([OPT_KILO, OPT_BLOCKSIZE])
                 .help(
                     "scale sizes by SIZE before printing them; e.g.\
                     '-BM' prints sizes in units of 1,048,576 bytes",
@@ -526,7 +516,7 @@ pub fn uu_app() -> Command {
             Arg::new(OPT_HUMAN_READABLE_BINARY)
                 .short('h')
                 .long("human-readable")
-                .overrides_with_all(&[OPT_HUMAN_READABLE_DECIMAL, OPT_HUMAN_READABLE_BINARY])
+                .overrides_with_all([OPT_HUMAN_READABLE_DECIMAL, OPT_HUMAN_READABLE_BINARY])
                 .help("print sizes in human readable format (e.g., 1K 234M 2G)")
                 .action(ArgAction::SetTrue),
         )
@@ -534,7 +524,7 @@ pub fn uu_app() -> Command {
             Arg::new(OPT_HUMAN_READABLE_DECIMAL)
                 .short('H')
                 .long("si")
-                .overrides_with_all(&[OPT_HUMAN_READABLE_BINARY, OPT_HUMAN_READABLE_DECIMAL])
+                .overrides_with_all([OPT_HUMAN_READABLE_BINARY, OPT_HUMAN_READABLE_DECIMAL])
                 .help("likewise, but use powers of 1000 not 1024")
                 .action(ArgAction::SetTrue),
         )
@@ -550,7 +540,7 @@ pub fn uu_app() -> Command {
             Arg::new(OPT_KILO)
                 .short('k')
                 .help("like --block-size=1K")
-                .overrides_with_all(&[OPT_BLOCKSIZE, OPT_KILO])
+                .overrides_with_all([OPT_BLOCKSIZE, OPT_KILO])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -564,7 +554,7 @@ pub fn uu_app() -> Command {
         .arg(
             Arg::new(OPT_NO_SYNC)
                 .long("no-sync")
-                .overrides_with_all(&[OPT_SYNC, OPT_NO_SYNC])
+                .overrides_with_all([OPT_SYNC, OPT_NO_SYNC])
                 .help("do not invoke sync before getting usage info (default)")
                 .action(ArgAction::SetTrue),
         )
@@ -577,9 +567,9 @@ pub fn uu_app() -> Command {
                 .require_equals(true)
                 .use_value_delimiter(true)
                 .value_parser(OUTPUT_FIELD_LIST)
-                .default_missing_values(&OUTPUT_FIELD_LIST)
-                .default_values(&["source", "size", "used", "avail", "pcent", "target"])
-                .conflicts_with_all(&[OPT_INODES, OPT_PORTABILITY, OPT_PRINT_TYPE])
+                .default_missing_values(OUTPUT_FIELD_LIST)
+                .default_values(["source", "size", "used", "avail", "pcent", "target"])
+                .conflicts_with_all([OPT_INODES, OPT_PORTABILITY, OPT_PRINT_TYPE])
                 .help(
                     "use the output format defined by FIELD_LIST, \
                      or print all fields if FIELD_LIST is omitted.",
@@ -596,7 +586,7 @@ pub fn uu_app() -> Command {
         .arg(
             Arg::new(OPT_SYNC)
                 .long("sync")
-                .overrides_with_all(&[OPT_NO_SYNC, OPT_SYNC])
+                .overrides_with_all([OPT_NO_SYNC, OPT_SYNC])
                 .help("invoke sync before getting usage info (non-windows only)")
                 .action(ArgAction::SetTrue),
         )
@@ -753,7 +743,7 @@ mod tests {
 
         #[test]
         fn test_remote_included() {
-            let opt = Default::default();
+            let opt = Options::default();
             let m = mount_info("ext4", "/mnt/foo", true, false);
             assert!(is_included(&m, &opt));
         }
@@ -780,7 +770,7 @@ mod tests {
 
         #[test]
         fn test_dummy_excluded() {
-            let opt = Default::default();
+            let opt = Options::default();
             let m = mount_info("ext4", "/mnt/foo", false, true);
             assert!(!is_included(&m, &opt));
         }
@@ -871,11 +861,11 @@ mod tests {
 
     mod filter_mount_list {
 
-        use crate::filter_mount_list;
+        use crate::{filter_mount_list, Options};
 
         #[test]
         fn test_empty() {
-            let opt = Default::default();
+            let opt = Options::default();
             let mount_infos = vec![];
             assert!(filter_mount_list(mount_infos, &opt).is_empty());
         }

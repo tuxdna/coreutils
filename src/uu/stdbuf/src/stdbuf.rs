@@ -1,14 +1,9 @@
-// * This file is part of the uutils coreutils package.
-// *
-// * (c) Dorota Kapturkiewicz <dokaptur@gmail.com>
-// *
-// * For the full copyright and license information, please view the LICENSE
-// * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) tempdir dyld dylib dragonflybsd optgrps libstdbuf
-
-#[macro_use]
-extern crate uucore;
 
 use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 use std::fs::File;
@@ -19,24 +14,12 @@ use std::process;
 use tempfile::tempdir;
 use tempfile::TempDir;
 use uucore::error::{FromIo, UResult, USimpleError, UUsageError};
-use uucore::format_usage;
-use uucore::parse_size::parse_size;
+use uucore::parse_size::parse_size_u64;
+use uucore::{crash, format_usage, help_about, help_section, help_usage};
 
-static ABOUT: &str =
-    "Run COMMAND, with modified buffering operations for its standard streams.\n\n\
-     Mandatory arguments to long options are mandatory for short options too.";
-const USAGE: &str = "{} OPTION... COMMAND";
-static LONG_HELP: &str = "If MODE is 'L' the corresponding stream will be line buffered.\n\
-     This option is invalid with standard input.\n\n\
-     If MODE is '0' the corresponding stream will be unbuffered.\n\n\
-     Otherwise MODE is a number which may be followed by one of the following:\n\n\
-     KB 1000, K 1024, MB 1000*1000, M 1024*1024, and so on for G, T, P, E, Z, Y.\n\
-     In this case the corresponding stream will be fully buffered with the buffer size set to \
-     MODE bytes.\n\n\
-     NOTE: If COMMAND adjusts the buffering of its standard streams ('tee' does for e.g.) then \
-     that will override corresponding settings changed by 'stdbuf'.\n\
-     Also some filters (like 'dd' and 'cat' etc.) don't use streams for I/O, \
-     and are thus unaffected by 'stdbuf' settings.\n";
+const ABOUT: &str = help_about!("stdbuf.md");
+const USAGE: &str = help_usage!("stdbuf.md");
+const LONG_HELP: &str = help_section!("after help", "stdbuf.md");
 
 mod options {
     pub const INPUT: &str = "input";
@@ -101,6 +84,8 @@ fn preload_strings() -> (&'static str, &'static str) {
     target_vendor = "apple"
 )))]
 fn preload_strings() -> (&'static str, &'static str) {
+    use uucore::crash;
+
     crash!(1, "Command not supported for this operating system!")
 }
 
@@ -116,13 +101,12 @@ fn check_option(matches: &ArgMatches, name: &str) -> Result<BufferType, ProgramO
                     Ok(BufferType::Line)
                 }
             }
-            x => parse_size(x).map_or_else(
+            x => parse_size_u64(x).map_or_else(
                 |e| crash!(125, "invalid mode {}", e),
                 |m| {
                     Ok(BufferType::Size(m.try_into().map_err(|_| {
                         ProgramOptionsError(format!(
-                            "invalid mode '{}': Value too large for defined data type",
-                            x
+                            "invalid mode '{x}': Value too large for defined data type"
                         ))
                     })?))
                 },
@@ -144,7 +128,7 @@ fn set_command_env(command: &mut process::Command, buffer_name: &str, buffer_typ
     }
 }
 
-fn get_preload_env(tmp_dir: &mut TempDir) -> io::Result<(String, PathBuf)> {
+fn get_preload_env(tmp_dir: &TempDir) -> io::Result<(String, PathBuf)> {
     let (preload, extension) = preload_strings();
     let inject_path = tmp_dir.path().join("libstdbuf").with_extension(extension);
 
@@ -166,8 +150,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let mut command = process::Command::new(command_values.next().unwrap());
     let command_params: Vec<&str> = command_values.map(|s| s.as_ref()).collect();
 
-    let mut tmp_dir = tempdir().unwrap();
-    let (preload_env, libstdbuf) = get_preload_env(&mut tmp_dir).map_err_context(String::new)?;
+    let tmp_dir = tempdir().unwrap();
+    let (preload_env, libstdbuf) = get_preload_env(&tmp_dir).map_err_context(String::new)?;
     command.env(preload_env, libstdbuf);
     set_command_env(&mut command, "_STDBUF_I", &options.stdin);
     set_command_env(&mut command, "_STDBUF_O", &options.stdout);

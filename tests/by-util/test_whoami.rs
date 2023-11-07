@@ -1,9 +1,11 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
-use crate::common::util::*;
+#[cfg(unix)]
+use crate::common::util::expected_result;
+use crate::common::util::{is_ci, whoami, TestScenario};
 
 #[test]
 fn test_invalid_arg() {
@@ -43,8 +45,13 @@ fn test_normal_compare_env() {
     if whoami == "nobody" {
         println!("test skipped:");
     } else if !is_ci() {
-        new_ucmd!().succeeds().stdout_is(format!("{}\n", whoami));
+        new_ucmd!().succeeds().stdout_is(format!("{whoami}\n"));
     } else {
         println!("test skipped:");
     }
+}
+
+#[test]
+fn test_succeeds_on_all_platforms() {
+    new_ucmd!().succeeds().no_stderr();
 }

@@ -1,8 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Alan Andrade <alan.andradec@gmail.com>
-// (c) Jian Zeng <anonymousknight96 AT gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -36,19 +33,17 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-#[macro_use]
-extern crate uucore;
-
 use clap::{crate_version, Arg, ArgAction, Command};
 use std::ffi::CStr;
 use uucore::display::Quotable;
 use uucore::entries::{self, Group, Locate, Passwd};
 use uucore::error::UResult;
 use uucore::error::{set_exit_code, USimpleError};
-use uucore::format_usage;
 pub use uucore::libc;
 use uucore::libc::{getlogin, uid_t};
+use uucore::line_ending::LineEnding;
 use uucore::process::{getegid, geteuid, getgid, getuid};
+use uucore::{format_usage, help_about, help_section, help_usage, show_error};
 
 macro_rules! cstr2cow {
     ($v:expr) => {
@@ -56,9 +51,9 @@ macro_rules! cstr2cow {
     };
 }
 
-static ABOUT: &str = "Print user and group information for each specified USER,
-or (when USER omitted) for the current user.";
-const USAGE: &str = "{} [OPTION]... [USER]...";
+const ABOUT: &str = help_about!("id.md");
+const USAGE: &str = help_usage!("id.md");
+const AFTER_HELP: &str = help_section!("after help", "id.md");
 
 #[cfg(not(feature = "selinux"))]
 static CONTEXT_HELP_TEXT: &str = "print only the security context of the process (not enabled)";
@@ -77,15 +72,6 @@ mod options {
     pub const OPT_REAL_ID: &str = "real";
     pub const OPT_ZERO: &str = "zero"; // BSD's id does not have this
     pub const ARG_USERS: &str = "USER";
-}
-
-fn get_description() -> &'static str {
-    "The id utility displays the user and group names and numeric IDs, of the \
-    calling process, to the standard output. If the real and effective IDs are \
-    different, both are displayed, otherwise only the real ID is displayed.\n\n\
-    If a user (login name or user ID) is specified, the user and group IDs of \
-    that user are displayed. In this case, the real and effective IDs are \
-    assumed to be the same."
 }
 
 struct Ids {
@@ -123,10 +109,9 @@ struct State {
 }
 
 #[uucore::main]
+#[allow(clippy::cognitive_complexity)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let matches = uu_app()
-        .after_help(get_description())
-        .try_get_matches_from(args)?;
+    let matches = uu_app().after_help(AFTER_HELP).try_get_matches_from(args)?;
 
     let users: Vec<String> = matches
         .get_many::<String>(options::ARG_USERS)
@@ -188,13 +173,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             " ".to_string()
         }
     };
-    let line_ending = {
-        if state.zflag {
-            '\0'
-        } else {
-            '\n'
-        }
-    };
+    let line_ending = LineEnding::from_zero_flag(state.zflag);
 
     if state.cflag {
         if state.selinux_supported {
@@ -217,9 +196,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     for i in 0..=users.len() {
-        let possible_pw = if !state.user_specified {
-            None
-        } else {
+        let possible_pw = if state.user_specified {
             match Passwd::locate(users[i].as_str()) {
                 Ok(p) => Some(p),
                 Err(_) => {
@@ -232,6 +209,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                     }
                 }
             }
+        } else {
+            None
         };
 
         // GNU's `id` does not support the flags: -p/-P/-A.
@@ -327,9 +306,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
 
         if default_format {
-            id_print(&mut state, &groups);
+            id_print(&state, &groups);
         }
-        print!("{}", line_ending);
+        print!("{line_ending}");
 
         if i + 1 >= users.len() {
             break;
@@ -348,7 +327,7 @@ pub fn uu_app() -> Command {
         .arg(
             Arg::new(options::OPT_AUDIT)
                 .short('A')
-                .conflicts_with_all(&[
+                .conflicts_with_all([
                     options::OPT_GROUP,
                     options::OPT_EFFECTIVE_USER,
                     options::OPT_HUMAN_READABLE,
@@ -382,7 +361,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::OPT_GROUPS)
                 .short('G')
                 .long(options::OPT_GROUPS)
-                .conflicts_with_all(&[
+                .conflicts_with_all([
                     options::OPT_GROUP,
                     options::OPT_EFFECTIVE_USER,
                     options::OPT_CONTEXT,
@@ -443,7 +422,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::OPT_CONTEXT)
                 .short('Z')
                 .long(options::OPT_CONTEXT)
-                .conflicts_with_all(&[options::OPT_GROUP, options::OPT_EFFECTIVE_USER])
+                .conflicts_with_all([options::OPT_GROUP, options::OPT_EFFECTIVE_USER])
                 .help(CONTEXT_HELP_TEXT)
                 .action(ArgAction::SetTrue),
         )
@@ -471,11 +450,11 @@ fn pretty(possible_pw: Option<Passwd>) {
         let rid = getuid();
         if let Ok(p) = Passwd::locate(rid) {
             if login == p.name {
-                println!("login\t{}", login);
+                println!("login\t{login}");
             }
             println!("uid\t{}", p.name);
         } else {
-            println!("uid\t{}", rid);
+            println!("uid\t{rid}");
         }
 
         let eid = getegid();
@@ -483,7 +462,7 @@ fn pretty(possible_pw: Option<Passwd>) {
             if let Ok(p) = Passwd::locate(eid) {
                 println!("euid\t{}", p.name);
             } else {
-                println!("euid\t{}", eid);
+                println!("euid\t{eid}");
             }
         }
 
@@ -492,7 +471,7 @@ fn pretty(possible_pw: Option<Passwd>) {
             if let Ok(g) = Group::locate(rid) {
                 println!("euid\t{}", g.name);
             } else {
-                println!("euid\t{}", rid);
+                println!("euid\t{rid}");
             }
         }
 
@@ -569,7 +548,7 @@ fn auditid() {
     println!("asid={}", auditinfo.ai_asid);
 }
 
-fn id_print(state: &mut State, groups: &[u32]) {
+fn id_print(state: &State, groups: &[u32]) {
     let uid = state.ids.as_ref().unwrap().uid;
     let gid = state.ids.as_ref().unwrap().gid;
     let euid = state.ids.as_ref().unwrap().euid;

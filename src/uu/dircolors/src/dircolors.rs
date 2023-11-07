@@ -1,8 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-// (c) Mitchell Mebane <mitchell.mebane@gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -12,10 +9,12 @@ use std::borrow::Borrow;
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::Path;
 
 use clap::{crate_version, Arg, ArgAction, Command};
 use uucore::display::Quotable;
 use uucore::error::{UResult, USimpleError, UUsageError};
+use uucore::{help_about, help_section, help_usage};
 
 mod options {
     pub const BOURNE_SHELL: &str = "bourne-shell";
@@ -25,13 +24,9 @@ mod options {
     pub const FILE: &str = "FILE";
 }
 
-static USAGE: &str = "{} [OPTION]... [FILE]";
-static ABOUT: &str = "Output commands to set the LS_COLORS environment variable.";
-static LONG_HELP: &str = "
- If FILE is specified, read it to determine which colors to use for which
- file types and extensions.  Otherwise, a precompiled database is used.
- For details on the format of these files, run 'dircolors --print-database'
-";
+const USAGE: &str = help_usage!("dircolors.md");
+const ABOUT: &str = help_about!("dircolors.md");
+const AFTER_HELP: &str = help_section!("after help", "dircolors.md");
 
 mod colors;
 use self::colors::INTERNAL_DB;
@@ -45,7 +40,6 @@ pub enum OutputFmt {
 }
 
 pub fn guess_syntax() -> OutputFmt {
-    use std::path::Path;
     match env::var("SHELL") {
         Ok(ref s) if !s.is_empty() => {
             let shell_path: &Path = s.as_ref();
@@ -67,7 +61,7 @@ pub fn guess_syntax() -> OutputFmt {
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let args = args.collect_ignore();
 
-    let matches = uu_app().try_get_matches_from(&args)?;
+    let matches = uu_app().try_get_matches_from(args)?;
 
     let files = matches
         .get_many::<String>(options::FILE)
@@ -103,7 +97,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 ),
             ));
         }
-        println!("{}", INTERNAL_DB);
+        println!("{INTERNAL_DB}");
         return Ok(());
     }
 
@@ -139,17 +133,28 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         ));
     } else if files[0].eq("-") {
         let fin = BufReader::new(std::io::stdin());
-        result = parse(fin.lines().filter_map(Result::ok), &out_format, files[0]);
+        result = parse(fin.lines().map_while(Result::ok), &out_format, files[0]);
     } else {
-        match File::open(files[0]) {
+        let path = Path::new(files[0]);
+        if path.is_dir() {
+            return Err(USimpleError::new(
+                2,
+                format!("expected file, got directory {}", path.quote()),
+            ));
+        }
+        match File::open(path) {
             Ok(f) => {
                 let fin = BufReader::new(f);
-                result = parse(fin.lines().filter_map(Result::ok), &out_format, files[0]);
+                result = parse(
+                    fin.lines().map_while(Result::ok),
+                    &out_format,
+                    &path.to_string_lossy(),
+                );
             }
             Err(e) => {
                 return Err(USimpleError::new(
                     1,
-                    format!("{}: {}", files[0].maybe_quote(), e),
+                    format!("{}: {}", path.maybe_quote(), e),
                 ));
             }
         }
@@ -157,12 +162,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     match result {
         Ok(s) => {
-            println!("{}", s);
+            println!("{s}");
             Ok(())
         }
-        Err(s) => {
-            return Err(USimpleError::new(1, s));
-        }
+        Err(s) => Err(USimpleError::new(1, s)),
     }
 }
 
@@ -170,7 +173,7 @@ pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
         .version(crate_version!())
         .about(ABOUT)
-        .after_help(LONG_HELP)
+        .after_help(AFTER_HELP)
         .override_usage(format_usage(USAGE))
         .infer_long_args(true)
         .arg(
@@ -276,6 +279,7 @@ enum ParseState {
 use std::collections::HashMap;
 use uucore::{format_usage, parse_glob};
 
+#[allow(clippy::cognitive_complexity)]
 fn parse<T>(lines: T, fmt: &OutputFmt, fp: &str) -> Result<String, String>
 where
     T: IntoIterator,
@@ -287,7 +291,7 @@ where
         OutputFmt::Shell => result.push_str("LS_COLORS='"),
         OutputFmt::CShell => result.push_str("setenv LS_COLORS '"),
         OutputFmt::Display => (),
-        _ => unreachable!(),
+        OutputFmt::Unknown => unreachable!(),
     }
 
     let mut table: HashMap<&str, &str> = HashMap::with_capacity(48);
@@ -368,23 +372,23 @@ where
             if state != ParseState::Pass {
                 if key.starts_with('.') {
                     if *fmt == OutputFmt::Display {
-                        result.push_str(format!("\x1b[{1}m*{0}\t{1}\x1b[0m\n", key, val).as_str());
+                        result.push_str(format!("\x1b[{val}m*{key}\t{val}\x1b[0m\n").as_str());
                     } else {
-                        result.push_str(format!("*{}={}:", key, val).as_str());
+                        result.push_str(format!("*{key}={val}:").as_str());
                     }
                 } else if key.starts_with('*') {
                     if *fmt == OutputFmt::Display {
-                        result.push_str(format!("\x1b[{1}m{0}\t{1}\x1b[0m\n", key, val).as_str());
+                        result.push_str(format!("\x1b[{val}m{key}\t{val}\x1b[0m\n").as_str());
                     } else {
-                        result.push_str(format!("{}={}:", key, val).as_str());
+                        result.push_str(format!("{key}={val}:").as_str());
                     }
                 } else if lower == "options" || lower == "color" || lower == "eightbit" {
                     // Slackware only. Ignore
                 } else if let Some(s) = table.get(lower.as_str()) {
                     if *fmt == OutputFmt::Display {
-                        result.push_str(format!("\x1b[{1}m{0}\t{1}\x1b[0m\n", s, val).as_str());
+                        result.push_str(format!("\x1b[{val}m{s}\t{val}\x1b[0m\n").as_str());
                     } else {
-                        result.push_str(format!("{}={}:", s, val).as_str());
+                        result.push_str(format!("{s}={val}:").as_str());
                     }
                 } else {
                     return Err(format!(
@@ -405,7 +409,7 @@ where
             // remove latest "\n"
             result.pop();
         }
-        _ => unreachable!(),
+        OutputFmt::Unknown => unreachable!(),
     }
 
     Ok(result)

@@ -1,6 +1,10 @@
-// Copyright (C) ~ Roy Ivy III <rivy.dev@gmail.com>; MIT license
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+//
+// spell-checker:ignore backticks uuhelp
 
-extern crate proc_macro;
 use std::{fs::File, io::Read, path::PathBuf};
 
 use proc_macro::{Literal, TokenStream, TokenTree};
@@ -37,7 +41,32 @@ pub fn main(_args: TokenStream, stream: TokenStream) -> TokenStream {
     TokenStream::from(new)
 }
 
-/// Get the usage from the "Usage" section in the help file.
+// FIXME: This is currently a stub. We could do much more here and could
+// even pull in a full markdown parser to get better results.
+/// Render markdown into a format that's easier to read in the terminal.
+///
+/// For now, all this function does is remove backticks.
+/// Some ideas for future improvement:
+/// - Render headings as bold
+/// - Convert triple backticks to indented
+/// - Printing tables in a nice format
+fn render_markdown(s: &str) -> String {
+    s.replace('`', "")
+}
+
+/// Get the about text from the help file.
+///
+/// The about text is assumed to be the text between the first markdown
+/// code block and the next header, if any. It may span multiple lines.
+#[proc_macro]
+pub fn help_about(input: TokenStream) -> TokenStream {
+    let input: Vec<TokenTree> = input.into_iter().collect();
+    let filename = get_argument(&input, 0, "filename");
+    let text: String = uuhelp_parser::parse_about(&read_help(&filename));
+    TokenTree::Literal(Literal::string(&text)).into()
+}
+
+/// Get the usage from the help file.
 ///
 /// The usage is assumed to be surrounded by markdown code fences. It may span
 /// multiple lines. The first word of each line is assumed to be the name of
@@ -47,7 +76,7 @@ pub fn main(_args: TokenStream, stream: TokenStream) -> TokenStream {
 pub fn help_usage(input: TokenStream) -> TokenStream {
     let input: Vec<TokenTree> = input.into_iter().collect();
     let filename = get_argument(&input, 0, "filename");
-    let text: String = parse_usage(&parse_help("usage", &filename));
+    let text: String = uuhelp_parser::parse_usage(&read_help(&filename));
     TokenTree::Literal(Literal::string(&text)).into()
 }
 
@@ -80,8 +109,15 @@ pub fn help_section(input: TokenStream) -> TokenStream {
     let input: Vec<TokenTree> = input.into_iter().collect();
     let section = get_argument(&input, 0, "section");
     let filename = get_argument(&input, 1, "filename");
-    let text = parse_help(&section, &filename);
-    TokenTree::Literal(Literal::string(&text)).into()
+
+    if let Some(text) = uuhelp_parser::parse_section(&section, &read_help(&filename)) {
+        let rendered = render_markdown(&text);
+        TokenTree::Literal(Literal::string(&rendered)).into()
+    } else {
+        panic!(
+            "The section '{section}' could not be found in the help file. Maybe it is spelled wrong?"
+        )
+    }
 }
 
 /// Get an argument from the input vector of `TokenTree`.
@@ -92,8 +128,8 @@ fn get_argument(input: &[TokenTree], index: usize, name: &str) -> String {
     // Multiply by two to ignore the `','` in between the arguments
     let string = match &input.get(index * 2) {
         Some(TokenTree::Literal(lit)) => lit.to_string(),
-        Some(_) => panic!("Argument {} should be a string literal.", index),
-        None => panic!("Missing argument at index {} for {}", index, name),
+        Some(_) => panic!("Argument {index} should be a string literal."),
+        None => panic!("Missing argument at index {index} for {name}"),
     };
 
     string
@@ -106,13 +142,11 @@ fn get_argument(input: &[TokenTree], index: usize, name: &str) -> String {
         .to_string()
 }
 
-/// Read the help file and extract a section
-fn parse_help(section: &str, filename: &str) -> String {
-    let section = section.to_lowercase();
-    let section = section.trim_matches('"');
+/// Read the help file
+fn read_help(filename: &str) -> String {
     let mut content = String::new();
-    let mut path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
 
+    let mut path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     path.push(filename);
 
     File::open(path)
@@ -120,127 +154,5 @@ fn parse_help(section: &str, filename: &str) -> String {
         .read_to_string(&mut content)
         .unwrap();
 
-    parse_help_section(section, &content)
-}
-
-/// Get a single section from content
-///
-/// The section must be a second level section (i.e. start with `##`).
-fn parse_help_section(section: &str, content: &str) -> String {
-    fn is_section_header(line: &str, section: &str) -> bool {
-        line.strip_prefix("##")
-            .map_or(false, |l| l.trim().to_lowercase() == section)
-    }
-
-    // We cannot distinguish between an empty or non-existing section below,
-    // so we do a quick test to check whether the section exists to provide
-    // a nice error message.
-    if content.lines().all(|l| !is_section_header(l, section)) {
-        panic!(
-            "The section '{}' could not be found in the help file. Maybe it is spelled wrong?",
-            section
-        )
-    }
-
     content
-        .lines()
-        .skip_while(|&l| !is_section_header(l, section))
-        .skip(1)
-        .take_while(|l| !l.starts_with("##"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
-}
-
-/// Parses a markdown code block into a usage string
-///
-/// The code fences are removed and the name of the util is replaced
-/// with `{}` so that it can be replaced with the appropriate name
-/// at runtime.
-fn parse_usage(content: &str) -> String {
-    content
-        .strip_suffix("```")
-        .unwrap()
-        .lines()
-        .skip(1) // Skip the "```" of markdown syntax
-        .map(|l| {
-            // Replace the util name (assumed to be the first word) with "{}"
-            // to be replaced with the runtime value later.
-            if let Some((_util, args)) = l.split_once(' ') {
-                format!("{{}} {}\n", args)
-            } else {
-                "{}\n".to_string()
-            }
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{parse_help_section, parse_usage};
-
-    #[test]
-    fn section_parsing() {
-        let input = "\
-            # ls\n\
-            ## some section\n\
-            This is some section\n\
-            \n\
-            ## ANOTHER SECTION
-            This is the other section\n\
-            with multiple lines\n";
-
-        assert_eq!(
-            parse_help_section("some section", input),
-            "This is some section"
-        );
-        assert_eq!(
-            parse_help_section("another section", input),
-            "This is the other section\nwith multiple lines"
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn section_parsing_panic() {
-        let input = "\
-            # ls\n\
-            ## some section\n\
-            This is some section\n\
-            \n\
-            ## ANOTHER SECTION
-            This is the other section\n\
-            with multiple lines\n";
-        parse_help_section("non-existent section", input);
-    }
-
-    #[test]
-    fn usage_parsing() {
-        let input = "\
-            # ls\n\
-            ## Usage\n\
-            ```\n\
-            ls -l\n\
-            ```\n\
-            ## some section\n\
-            This is some section\n\
-            \n\
-            ## ANOTHER SECTION
-            This is the other section\n\
-            with multiple lines\n";
-
-        assert_eq!(parse_usage(&parse_help_section("usage", input)), "{} -l",);
-
-        assert_eq!(
-            parse_usage(
-                "\
-                ```\n\
-                util [some] [options]\n\
-                ```\
-                "
-            ),
-            "{} [some] [options]"
-        );
-    }
 }

@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (vars) charf decf floatf intf scif strf Cninety
 
 //! Primitives used by Sub Tokenizer
@@ -12,23 +16,6 @@ pub enum FieldType {
     Intf,
     Charf,
 }
-
-// #[allow(non_camel_case_types)]
-// pub enum FChar {
-// d,
-// e,
-// E,
-// i,
-// f,
-// F,
-// g,
-// G,
-// u,
-// x,
-// X,
-// o
-// }
-//
 
 // a Sub Tokens' fields are stored
 // as a single object so they can be more simply

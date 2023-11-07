@@ -1,8 +1,8 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
-// spell-checker:ignore zaaa zaab
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+// spell-checker:ignore zaaa zaab feff
 //! A number in arbitrary radix expressed in a positional notation.
 //!
 //! Use the [`Number`] enum to represent an arbitrary number in an
@@ -67,7 +67,7 @@ impl Error for Overflow {}
 ///
 /// For the [`DynamicWidthNumber`], the digits are not unique in the
 /// sense that repeatedly incrementing the number will eventually
-/// yield `vec![0, 0]`, `vec![0, 0, 0], `vec![0, 0, 0, 0]`, etc.
+/// yield `vec![0, 0]`, `vec![0, 0, 0]`, `vec![0, 0, 0, 0]`, etc.
 /// That's okay because each of these numbers will be displayed
 /// differently and we only intend to use these numbers for display
 /// purposes and not for mathematical purposes.
@@ -95,7 +95,7 @@ impl Number {
     ///
     /// For the [`DynamicWidthNumber`], the digits are not unique in the
     /// sense that repeatedly incrementing the number will eventually
-    /// yield `vec![0, 0]`, `vec![0, 0, 0], `vec![0, 0, 0, 0]`, etc.
+    /// yield `vec![0, 0]`, `vec![0, 0, 0]`, `vec![0, 0, 0, 0]`, etc.
     /// That's okay because each of these numbers will be displayed
     /// differently and we only intend to use these numbers for display
     /// purposes and not for mathematical purposes.
@@ -200,10 +200,10 @@ impl FixedWidthNumber {
                 break;
             }
         }
-        if suffix_start != 0 {
-            Err(Overflow)
-        } else {
+        if suffix_start == 0 {
             Ok(Self { radix, digits })
+        } else {
+            Err(Overflow)
         }
     }
 
@@ -245,7 +245,7 @@ impl Display for FixedWidthNumber {
             .iter()
             .map(|d| map_digit(self.radix, *d))
             .collect();
-        write!(f, "{}", digits)
+        write!(f, "{digits}")
     }
 }
 
@@ -398,6 +398,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_dynamic_width_number_display_alphabetic() {
         fn num(n: usize) -> Number {
             let mut number = Number::DynamicWidth(DynamicWidthNumber::new(26, 0));
@@ -443,6 +444,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_dynamic_width_number_display_numeric_hexadecimal() {
         fn num(n: usize) -> Number {
             let mut number = Number::DynamicWidth(DynamicWidthNumber::new(16, 0));
@@ -467,6 +469,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_fixed_width_number_increment() {
         let mut n = Number::FixedWidth(FixedWidthNumber::new(3, 2, 0).unwrap());
         assert_eq!(n.digits(), vec![0, 0]);
@@ -490,6 +493,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_fixed_width_number_display_alphabetic() {
         fn num(n: usize) -> Result<Number, Overflow> {
             let mut number = Number::FixedWidth(FixedWidthNumber::new(26, 2, 0).unwrap());

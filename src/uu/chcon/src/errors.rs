@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use std::ffi::OsString;
 use std::fmt::Write;
 use std::io;
@@ -67,10 +71,10 @@ impl Error {
 
 pub(crate) fn report_full_error(mut err: &dyn std::error::Error) -> String {
     let mut desc = String::with_capacity(256);
-    write!(desc, "{}", err).unwrap();
+    write!(desc, "{err}").unwrap();
     while let Some(source) = err.source() {
         err = source;
-        write!(desc, ". {}", err).unwrap();
+        write!(desc, ". {err}").unwrap();
     }
     desc
 }

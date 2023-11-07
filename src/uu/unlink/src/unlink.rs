@@ -1,11 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Colin Warren <me@zv.ms>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
-
-/* last synced with: unlink (GNU coreutils) 8.21 */
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 use std::ffi::OsString;
 use std::fs::remove_file;
@@ -16,8 +12,10 @@ use clap::{crate_version, Arg, Command};
 
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult};
+use uucore::{format_usage, help_about, help_usage};
 
-static ABOUT: &str = "Unlink the file at FILE.";
+const ABOUT: &str = help_about!("unlink.md");
+const USAGE: &str = help_usage!("unlink.md");
 static OPT_PATH: &str = "FILE";
 
 #[uucore::main]
@@ -33,6 +31,7 @@ pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
         .version(crate_version!())
         .about(ABOUT)
+        .override_usage(format_usage(USAGE))
         .infer_long_args(true)
         .arg(
             Arg::new(OPT_PATH)

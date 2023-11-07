@@ -1,18 +1,14 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Jordi Boggiano <j.boggiano@seld.be>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
-
-/* last synced with: printenv (GNU coreutils) 8.13 */
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 use clap::{crate_version, Arg, ArgAction, Command};
 use std::env;
-use uucore::{error::UResult, format_usage};
+use uucore::{error::UResult, format_usage, help_about, help_usage};
 
-static ABOUT: &str = "Display the values of the specified environment VARIABLE(s), or (with no VARIABLE) display name and value pairs for them all.";
-const USAGE: &str = "{} [VARIABLE]... [OPTION]...";
+const ABOUT: &str = help_about!("printenv.md");
+const USAGE: &str = help_usage!("printenv.md");
 
 static OPT_NULL: &str = "null";
 
@@ -35,21 +31,26 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     if variables.is_empty() {
         for (env_var, value) in env::vars() {
-            print!("{}={}{}", env_var, value, separator);
+            print!("{env_var}={value}{separator}");
         }
         return Ok(());
     }
 
-    let mut not_found = false;
+    let mut error_found = false;
     for env_var in variables {
+        // we silently ignore a=b as variable but we trigger an error
+        if env_var.contains('=') {
+            error_found = true;
+            continue;
+        }
         if let Ok(var) = env::var(env_var) {
-            print!("{}{}", var, separator);
+            print!("{var}{separator}");
         } else {
-            not_found = true;
+            error_found = true;
         }
     }
 
-    if not_found {
+    if error_found {
         Err(1.into())
     } else {
         Ok(())

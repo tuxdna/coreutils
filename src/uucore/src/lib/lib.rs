@@ -1,13 +1,14 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // library ~ (core/bundler file)
-
-// Copyright (C) ~ Alex Lyon <arcterus@mail.com>
-// Copyright (C) ~ Roy Ivy III <rivy.dev@gmail.com>; MIT license
 
 // * feature-gated external crates (re-shared as public internal modules)
 #[cfg(feature = "libc")]
 pub extern crate libc;
-#[cfg(feature = "winapi")]
-pub extern crate winapi;
+#[cfg(all(feature = "windows-sys", target_os = "windows"))]
+pub extern crate windows_sys;
 
 //## internal modules
 
@@ -19,21 +20,21 @@ mod parser; // string parsing modules
 pub use uucore_procs::*;
 
 // * cross-platform modules
-pub use crate::mods::backup_control;
 pub use crate::mods::display;
 pub use crate::mods::error;
+pub use crate::mods::line_ending;
 pub use crate::mods::os;
 pub use crate::mods::panic;
-pub use crate::mods::quoting_style;
-pub use crate::mods::ranges;
-pub use crate::mods::version_cmp;
 
 // * string parsing modules
 pub use crate::parser::parse_glob;
 pub use crate::parser::parse_size;
 pub use crate::parser::parse_time;
+pub use crate::parser::shortcut_value_parser;
 
 // * feature-gated modules
+#[cfg(feature = "backup-control")]
+pub use crate::features::backup_control;
 #[cfg(feature = "encoding")]
 pub use crate::features::encoding;
 #[cfg(feature = "fs")]
@@ -44,8 +45,18 @@ pub use crate::features::fsext;
 pub use crate::features::lines;
 #[cfg(feature = "memo")]
 pub use crate::features::memo;
+#[cfg(feature = "quoting-style")]
+pub use crate::features::quoting_style;
+#[cfg(feature = "ranges")]
+pub use crate::features::ranges;
 #[cfg(feature = "ringbuffer")]
 pub use crate::features::ringbuffer;
+#[cfg(feature = "sum")]
+pub use crate::features::sum;
+#[cfg(feature = "update-control")]
+pub use crate::features::update_control;
+#[cfg(feature = "version-cmp")]
+pub use crate::features::version_cmp;
 
 // * (platform-specific) feature-gated modules
 // ** non-windows (i.e. Unix + Fuchsia)
@@ -82,6 +93,10 @@ use std::sync::atomic::Ordering;
 
 use once_cell::sync::Lazy;
 
+/// Execute utility code for `util`.
+///
+/// This macro expands to a main function that invokes the `uumain` function in `util`
+/// Exits with code returned by `uumain`.
 #[macro_export]
 macro_rules! bin {
     ($util:ident) => {
@@ -97,10 +112,13 @@ macro_rules! bin {
 
 /// Generate the usage string for clap.
 ///
-/// This function replaces all occurrences of `{}` with the execution phrase
-/// and returns the resulting `String`. It does **not** support
-/// more advanced formatting features such as `{0}`.
+/// This function does two things. It indents all but the first line to align
+/// the lines because clap adds "Usage: " to the first line. And it replaces
+/// all occurrences of `{}` with the execution phrase and returns the resulting
+/// `String`. It does **not** support more advanced formatting features such
+/// as `{0}`.
 pub fn format_usage(s: &str) -> String {
+    let s = s.replace('\n', &format!("\n{}", " ".repeat(7)));
     s.replace("{}", crate::execution_phrase())
 }
 
@@ -117,13 +135,11 @@ pub fn set_utility_is_second_arg() {
 static ARGV: Lazy<Vec<OsString>> = Lazy::new(|| wild::args_os().collect());
 
 static UTIL_NAME: Lazy<String> = Lazy::new(|| {
-    if get_utility_is_second_arg() {
-        &ARGV[1]
-    } else {
-        &ARGV[0]
-    }
-    .to_string_lossy()
-    .into_owned()
+    let base_index = usize::from(get_utility_is_second_arg());
+    let is_man = usize::from(ARGV[base_index].eq("manpage"));
+    let argv_index = base_index + is_man;
+
+    ARGV[argv_index].to_string_lossy().into_owned()
 });
 
 /// Derive the utility name.
@@ -165,6 +181,44 @@ impl<T: Iterator<Item = OsString> + Sized> Args for T {}
 pub fn args_os() -> impl Iterator<Item = OsString> {
     ARGV.iter().cloned()
 }
+
+/// Read a line from stdin and check whether the first character is `'y'` or `'Y'`
+pub fn read_yes() -> bool {
+    let mut s = String::new();
+    match std::io::stdin().read_line(&mut s) {
+        Ok(_) => matches!(s.chars().next(), Some('y' | 'Y')),
+        _ => false,
+    }
+}
+
+/// Prompt the user with a formatted string and returns `true` if they reply `'y'` or `'Y'`
+///
+/// This macro functions accepts the same syntax as `format!`. The prompt is written to
+/// `stderr`. A space is also printed at the end for nice spacing between the prompt and
+/// the user input. Any input starting with `'y'` or `'Y'` is interpreted as `yes`.
+///
+/// # Examples
+/// ```
+/// use uucore::prompt_yes;
+/// let file = "foo.rs";
+/// prompt_yes!("Do you want to delete '{}'?", file);
+/// ```
+/// will print something like below to `stderr` (with `util_name` substituted by the actual
+/// util name) and will wait for user input.
+/// ```txt
+/// util_name: Do you want to delete 'foo.rs'?
+/// ```
+#[macro_export]
+macro_rules! prompt_yes(
+    ($($args:tt)+) => ({
+        use std::io::Write;
+        eprint!("{}: ", uucore::util_name());
+        eprint!($($args)+);
+        eprint!(" ");
+        uucore::crash_if_err!(1, std::io::stderr().flush());
+        uucore::read_yes()
+    })
+);
 
 #[cfg(test)]
 mod tests {
@@ -232,5 +286,14 @@ mod tests {
         let os_str = OsStr::from_bytes(&source[..]);
         test_invalid_utf8_args_lossy(os_str);
         test_invalid_utf8_args_ignore(os_str);
+    }
+
+    #[test]
+    fn test_format_usage() {
+        assert_eq!(format_usage("expr EXPRESSION"), "expr EXPRESSION");
+        assert_eq!(
+            format_usage("expr EXPRESSION\nexpr OPTION"),
+            "expr EXPRESSION\n       expr OPTION"
+        );
     }
 }

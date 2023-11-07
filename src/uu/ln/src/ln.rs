@@ -1,20 +1,15 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Joseph Crail <jbcrail@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) srcpath targetpath EEXIST
-
-#[macro_use]
-extern crate uucore;
 
 use clap::{crate_version, Arg, ArgAction, Command};
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UError, UResult};
-use uucore::format_usage;
 use uucore::fs::{make_path_relative_to, paths_refer_to_same_file};
+use uucore::{format_usage, help_about, help_section, help_usage, prompt_yes, show_error};
 
 use std::borrow::Cow;
 use std::error::Error;
@@ -22,7 +17,6 @@ use std::ffi::OsString;
 use std::fmt::Display;
 use std::fs;
 
-use std::io::stdin;
 #[cfg(any(unix, target_os = "redox"))]
 use std::os::unix::fs::symlink;
 #[cfg(windows)]
@@ -89,26 +83,9 @@ impl UError for LnError {
     }
 }
 
-fn long_usage() -> String {
-    String::from(
-        " In the 1st form, create a link to TARGET with the name LINK_NAME.
-        In the 2nd form, create a link to TARGET in the current directory.
-        In the 3rd and 4th forms, create links to each TARGET in DIRECTORY.
-        Create hard links by default, symbolic links with --symbolic.
-        By default, each destination (name of new link) should not already exist.
-        When creating hard links, each TARGET must exist.  Symbolic links
-        can hold arbitrary text; if later resolved, a relative link is
-        interpreted in relation to its parent directory.
-        ",
-    )
-}
-
-static ABOUT: &str = "change file owner and group";
-const USAGE: &str = "\
-    {} [OPTION]... [-T] TARGET LINK_NAME
-    {} [OPTION]... TARGET
-    {} [OPTION]... TARGET... DIRECTORY
-    {} [OPTION]... -t DIRECTORY TARGET...";
+const ABOUT: &str = help_about!("ln.md");
+const USAGE: &str = help_usage!("ln.md");
+const AFTER_HELP: &str = help_section!("after help", "ln.md");
 
 mod options {
     pub const FORCE: &str = "force";
@@ -128,14 +105,13 @@ static ARG_FILES: &str = "files";
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    // clap requires a 'static string
-    let long_usage = format!(
-        "{}\n{}",
-        long_usage(),
+    let after_help = format!(
+        "{}\n\n{}",
+        AFTER_HELP,
         backup_control::BACKUP_CONTROL_LONG_HELP
     );
 
-    let matches = uu_app().after_help(long_usage).try_get_matches_from(args)?;
+    let matches = uu_app().after_help(after_help).try_get_matches_from(args)?;
 
     /* the list of files */
 
@@ -221,7 +197,7 @@ pub fn uu_app() -> Command {
             Arg::new(options::LOGICAL)
                 .short('L')
                 .long(options::LOGICAL)
-                .help("dereference TARGETs that are symbolic links")
+                .help("follow TARGETs that are symbolic links")
                 .overrides_with(options::PHYSICAL)
                 .action(ArgAction::SetTrue),
         )
@@ -314,13 +290,14 @@ fn exec(files: &[PathBuf], settings: &Settings) -> UResult<()> {
     link(&files[0], &files[1], settings)
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn link_files_in_dir(files: &[PathBuf], target_dir: &Path, settings: &Settings) -> UResult<()> {
     if !target_dir.is_dir() {
         return Err(LnError::TargetIsDirectory(target_dir.to_owned()).into());
     }
 
     let mut all_successful = true;
-    for srcpath in files.iter() {
+    for srcpath in files {
         let targetpath =
             if settings.no_dereference && matches!(settings.overwrite, OverwriteMode::Force) {
                 // In that case, we don't want to do link resolution
@@ -386,6 +363,7 @@ fn relative_path<'a>(src: &'a Path, dst: &Path) -> Cow<'a, Path> {
     src.into()
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn link(src: &Path, dst: &Path, settings: &Settings) -> UResult<()> {
     let mut backup_path = None;
     let source: Cow<'_, Path> = if settings.relative {
@@ -413,9 +391,8 @@ fn link(src: &Path, dst: &Path, settings: &Settings) -> UResult<()> {
         match settings.overwrite {
             OverwriteMode::NoClobber => {}
             OverwriteMode::Interactive => {
-                print!("{}: overwrite {}? ", uucore::util_name(), dst.quote());
-                if !read_yes() {
-                    return Ok(());
+                if !prompt_yes!("replace {}?", dst.quote()) {
+                    return Err(LnError::SomeLinksFailed.into());
                 }
 
                 if fs::remove_file(dst).is_ok() {};
@@ -443,7 +420,7 @@ fn link(src: &Path, dst: &Path, settings: &Settings) -> UResult<()> {
         } else {
             source.to_path_buf()
         };
-        fs::hard_link(&p, dst).map_err_context(|| {
+        fs::hard_link(p, dst).map_err_context(|| {
             format!(
                 "failed to create hard link {} => {}",
                 source.quote(),
@@ -462,17 +439,6 @@ fn link(src: &Path, dst: &Path, settings: &Settings) -> UResult<()> {
     Ok(())
 }
 
-fn read_yes() -> bool {
-    let mut s = String::new();
-    match stdin().read_line(&mut s) {
-        Ok(_) => match s.char_indices().next() {
-            Some((_, x)) => x == 'y' || x == 'Y',
-            _ => false,
-        },
-        _ => false,
-    }
-}
-
 fn simple_backup_path(path: &Path, suffix: &str) -> PathBuf {
     let mut p = path.as_os_str().to_str().unwrap().to_owned();
     p.push_str(suffix);
@@ -482,7 +448,7 @@ fn simple_backup_path(path: &Path, suffix: &str) -> PathBuf {
 fn numbered_backup_path(path: &Path) -> PathBuf {
     let mut i: u64 = 1;
     loop {
-        let new_path = simple_backup_path(path, &format!(".~{}~", i));
+        let new_path = simple_backup_path(path, &format!(".~{i}~"));
         if !new_path.exists() {
             return new_path;
         }

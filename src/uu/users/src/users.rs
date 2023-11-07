@@ -1,10 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) KokaKiwi <kokakiwi@kokakiwi.net>
-//  * (c) Jian Zeng <anonymousknight86@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (paths) wtmp
 
@@ -14,11 +11,11 @@ use std::path::Path;
 use clap::builder::ValueParser;
 use clap::{crate_version, Arg, Command};
 use uucore::error::UResult;
-use uucore::format_usage;
 use uucore::utmpx::{self, Utmpx};
+use uucore::{format_usage, help_about, help_usage};
 
-static ABOUT: &str = "Print the user names of users currently logged in to the current host";
-const USAGE: &str = "{} [FILE]";
+const ABOUT: &str = help_about!("users.md");
+const USAGE: &str = help_usage!("users.md");
 
 static ARG_FILES: &str = "files";
 
@@ -41,10 +38,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         .map(|v| v.map(AsRef::as_ref).collect())
         .unwrap_or_default();
 
-    let filename = if !files.is_empty() {
-        files[0]
-    } else {
+    let filename = if files.is_empty() {
         utmpx::DEFAULT_FILE.as_ref()
+    } else {
+        files[0]
     };
 
     let mut users = Utmpx::iter_all_records_from(filename)

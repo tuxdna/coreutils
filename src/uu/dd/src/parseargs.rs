@@ -1,7 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Tyler Steele <tyler.steele@protonmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 // spell-checker:ignore ctty, ctable, iseek, oseek, iconvflags, oconvflags parseargs outfile oconv
@@ -14,7 +12,7 @@ use crate::conversion_tables::ConversionTable;
 use std::error::Error;
 use uucore::display::Quotable;
 use uucore::error::UError;
-use uucore::parse_size::ParseSizeError;
+use uucore::parse_size::{ParseSizeError, Parser as SizeParser};
 use uucore::show_warning;
 
 /// Parser Errors describe errors with parser input
@@ -247,29 +245,29 @@ impl Parser {
             None => return Err(ParseError::UnrecognizedOperand(operand.to_string())),
             Some((k, v)) => match k {
                 "bs" => {
-                    let bs = self.parse_bytes(k, v)?;
+                    let bs = Self::parse_bytes(k, v)?;
                     self.ibs = bs;
                     self.obs = bs;
                 }
-                "cbs" => self.cbs = Some(self.parse_bytes(k, v)?),
+                "cbs" => self.cbs = Some(Self::parse_bytes(k, v)?),
                 "conv" => self.parse_conv_flags(v)?,
-                "count" => self.count = Some(self.parse_n(v)?),
-                "ibs" => self.ibs = self.parse_bytes(k, v)?,
+                "count" => self.count = Some(Self::parse_n(v)?),
+                "ibs" => self.ibs = Self::parse_bytes(k, v)?,
                 "if" => self.infile = Some(v.to_string()),
                 "iflag" => self.parse_input_flags(v)?,
-                "obs" => self.obs = self.parse_bytes(k, v)?,
+                "obs" => self.obs = Self::parse_bytes(k, v)?,
                 "of" => self.outfile = Some(v.to_string()),
                 "oflag" => self.parse_output_flags(v)?,
-                "seek" | "oseek" => self.seek = self.parse_n(v)?,
-                "skip" | "iseek" => self.skip = self.parse_n(v)?,
-                "status" => self.status = Some(self.parse_status_level(v)?),
+                "seek" | "oseek" => self.seek = Self::parse_n(v)?,
+                "skip" | "iseek" => self.skip = Self::parse_n(v)?,
+                "status" => self.status = Some(Self::parse_status_level(v)?),
                 _ => return Err(ParseError::UnrecognizedOperand(operand.to_string())),
             },
         }
         Ok(())
     }
 
-    fn parse_n(&self, val: &str) -> Result<Num, ParseError> {
+    fn parse_n(val: &str) -> Result<Num, ParseError> {
         let n = parse_bytes_with_opt_multiplier(val)?;
         Ok(if val.ends_with('B') {
             Num::Bytes(n)
@@ -278,13 +276,13 @@ impl Parser {
         })
     }
 
-    fn parse_bytes(&self, arg: &str, val: &str) -> Result<usize, ParseError> {
+    fn parse_bytes(arg: &str, val: &str) -> Result<usize, ParseError> {
         parse_bytes_with_opt_multiplier(val)?
             .try_into()
             .map_err(|_| ParseError::BsOutOfRange(arg.to_string()))
     }
 
-    fn parse_status_level(&self, val: &str) -> Result<StatusLevel, ParseError> {
+    fn parse_status_level(val: &str) -> Result<StatusLevel, ParseError> {
         match val {
             "none" => Ok(StatusLevel::None),
             "noxfer" => Ok(StatusLevel::Noxfer),
@@ -293,8 +291,9 @@ impl Parser {
         }
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn parse_input_flags(&mut self, val: &str) -> Result<(), ParseError> {
-        let mut i = &mut self.iflag;
+        let i = &mut self.iflag;
         for f in val.split(',') {
             match f {
                 // Common flags
@@ -303,7 +302,7 @@ impl Parser {
                 "directory" => linux_only!(f, i.directory = true),
                 "dsync" => linux_only!(f, i.dsync = true),
                 "sync" => linux_only!(f, i.sync = true),
-                "nocache" => return Err(ParseError::Unimplemented(f.to_string())),
+                "nocache" => linux_only!(f, i.nocache = true),
                 "nonblock" => linux_only!(f, i.nonblock = true),
                 "noatime" => linux_only!(f, i.noatime = true),
                 "noctty" => linux_only!(f, i.noctty = true),
@@ -324,8 +323,9 @@ impl Parser {
         Ok(())
     }
 
+    #[allow(clippy::cognitive_complexity)]
     fn parse_output_flags(&mut self, val: &str) -> Result<(), ParseError> {
-        let mut o = &mut self.oflag;
+        let o = &mut self.oflag;
         for f in val.split(',') {
             match f {
                 // Common flags
@@ -334,7 +334,7 @@ impl Parser {
                 "directory" => linux_only!(f, o.directory = true),
                 "dsync" => linux_only!(f, o.dsync = true),
                 "sync" => linux_only!(f, o.sync = true),
-                "nocache" => return Err(ParseError::Unimplemented(f.to_string())),
+                "nocache" => linux_only!(f, o.nocache = true),
                 "nonblock" => linux_only!(f, o.nonblock = true),
                 "noatime" => linux_only!(f, o.noatime = true),
                 "noctty" => linux_only!(f, o.noctty = true),
@@ -355,7 +355,7 @@ impl Parser {
     }
 
     fn parse_conv_flags(&mut self, val: &str) -> Result<(), ParseError> {
-        let mut c = &mut self.conv;
+        let c = &mut self.conv;
         for f in val.split(',') {
             match f {
                 // Conversion
@@ -394,7 +394,7 @@ impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnrecognizedOperand(arg) => {
-                write!(f, "Unrecognized operand '{}'", arg)
+                write!(f, "Unrecognized operand '{arg}'")
             }
             Self::MultipleFmtTable => {
                 write!(
@@ -415,37 +415,37 @@ impl std::fmt::Display for ParseError {
                 // Additional message about 'dd --help' is displayed only in this situation.
                 write!(
                     f,
-                    "invalid input flag: ‘{}’\nTry 'dd --help' for more information.",
-                    arg
+                    "invalid input flag: ‘{}’\nTry '{} --help' for more information.",
+                    arg,
+                    uucore::execution_phrase()
                 )
             }
             Self::ConvFlagNoMatch(arg) => {
-                write!(f, "Unrecognized conv=CONV -> {}", arg)
+                write!(f, "Unrecognized conv=CONV -> {arg}")
             }
             Self::MultiplierStringParseFailure(arg) => {
-                write!(f, "Unrecognized byte multiplier -> {}", arg)
+                write!(f, "Unrecognized byte multiplier -> {arg}")
             }
             Self::MultiplierStringOverflow(arg) => {
                 write!(
                     f,
-                    "Multiplier string would overflow on current system -> {}",
-                    arg
+                    "Multiplier string would overflow on current system -> {arg}"
                 )
             }
             Self::BlockUnblockWithoutCBS => {
                 write!(f, "conv=block or conv=unblock specified without cbs=N")
             }
             Self::StatusLevelNotRecognized(arg) => {
-                write!(f, "status=LEVEL not recognized -> {}", arg)
+                write!(f, "status=LEVEL not recognized -> {arg}")
             }
             Self::BsOutOfRange(arg) => {
-                write!(f, "{}=N cannot fit into memory", arg)
+                write!(f, "{arg}=N cannot fit into memory")
             }
             Self::Unimplemented(arg) => {
-                write!(f, "feature not implemented on this system -> {}", arg)
+                write!(f, "feature not implemented on this system -> {arg}")
             }
             Self::InvalidNumber(arg) => {
-                write!(f, "invalid number: ‘{}’", arg)
+                write!(f, "invalid number: ‘{arg}’")
             }
         }
     }
@@ -499,10 +499,14 @@ fn parse_bytes_only(s: &str) -> Result<u64, ParseError> {
 /// assert_eq!(parse_bytes_no_x("2k", "2k").unwrap(), 2 * 1024);
 /// ```
 fn parse_bytes_no_x(full: &str, s: &str) -> Result<u64, ParseError> {
+    let parser = SizeParser {
+        capital_b_bytes: true,
+        ..Default::default()
+    };
     let (num, multiplier) = match (s.find('c'), s.rfind('w'), s.rfind('b')) {
-        (None, None, None) => match uucore::parse_size::parse_size(s) {
+        (None, None, None) => match parser.parse_u64(s) {
             Ok(n) => (n, 1),
-            Err(ParseSizeError::InvalidSuffix(_)) | Err(ParseSizeError::ParseFailure(_)) => {
+            Err(ParseSizeError::InvalidSuffix(_) | ParseSizeError::ParseFailure(_)) => {
                 return Err(ParseError::InvalidNumber(full.to_string()))
             }
             Err(ParseSizeError::SizeTooBig(_)) => {

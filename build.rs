@@ -1,3 +1,8 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+
 // spell-checker:ignore (vars) krate
 
 use std::env;
@@ -6,10 +11,8 @@ use std::io::Write;
 use std::path::Path;
 
 pub fn main() {
-    // println!("cargo:warning=Running build.rs");
-
     if let Ok(profile) = env::var("PROFILE") {
-        println!("cargo:rustc-cfg=build={:?}", profile);
+        println!("cargo:rustc-cfg=build={profile:?}");
     }
 
     const ENV_FEATURE_PREFIX: &str = "CARGO_FEATURE_";
@@ -17,12 +20,13 @@ pub fn main() {
     const OVERRIDE_PREFIX: &str = "uu_";
 
     let out_dir = env::var("OUT_DIR").unwrap();
-    // println!("cargo:warning=out_dir={}", out_dir);
 
     let mut crates = Vec::new();
     for (key, val) in env::vars() {
         if val == "1" && key.starts_with(ENV_FEATURE_PREFIX) {
             let krate = key[ENV_FEATURE_PREFIX.len()..].to_lowercase();
+            // Allow this as we have a bunch of info in the comments
+            #[allow(clippy::match_same_arms)]
             match krate.as_ref() {
                 "default" | "macos" | "unix" | "windows" | "selinux" | "zip" => continue, // common/standard feature names
                 "nightly" | "test_unimplemented" => continue, // crate-local custom features
@@ -39,16 +43,17 @@ pub fn main() {
     let mut mf = File::create(Path::new(&out_dir).join("uutils_map.rs")).unwrap();
 
     mf.write_all(
-        "type UtilityMap<T> = phf::Map<&'static str, (fn(T) -> i32, fn() -> Command)>;\n\
+        "type UtilityMap<T> = phf::OrderedMap<&'static str, (fn(T) -> i32, fn() -> Command)>;\n\
          \n\
+         #[allow(clippy::too_many_lines)]
          fn util_map<T: uucore::Args>() -> UtilityMap<T> {\n"
             .as_bytes(),
     )
     .unwrap();
 
-    let mut phf_map = phf_codegen::Map::<&str>::new();
+    let mut phf_map = phf_codegen::OrderedMap::<&str>::new();
     for krate in &crates {
-        let map_value = format!("({krate}::uumain, {krate}::uu_app)", krate = krate);
+        let map_value = format!("({krate}::uumain, {krate}::uu_app)");
         match krate.as_ref() {
             // 'test' is named uu_test to avoid collision with rust core crate 'test'.
             // It can also be invoked by name '[' for the '[ expr ] syntax'.
@@ -60,22 +65,14 @@ pub fn main() {
                 phf_map.entry(&k[OVERRIDE_PREFIX.len()..], &map_value);
             }
             "false" | "true" => {
-                phf_map.entry(
-                    krate,
-                    &format!("(r#{krate}::uumain, r#{krate}::uu_app)", krate = krate),
-                );
+                phf_map.entry(krate, &format!("(r#{krate}::uumain, r#{krate}::uu_app)"));
             }
             "hashsum" => {
-                phf_map.entry(
-                    krate,
-                    &format!("({krate}::uumain, {krate}::uu_app_custom)", krate = krate),
-                );
+                phf_map.entry(krate, &format!("({krate}::uumain, {krate}::uu_app_custom)"));
 
-                let map_value = format!("({krate}::uumain, {krate}::uu_app_common)", krate = krate);
-                let map_value_bits =
-                    format!("({krate}::uumain, {krate}::uu_app_bits)", krate = krate);
-                let map_value_b3sum =
-                    format!("({krate}::uumain, {krate}::uu_app_b3sum)", krate = krate);
+                let map_value = format!("({krate}::uumain, {krate}::uu_app_common)");
+                let map_value_bits = format!("({krate}::uumain, {krate}::uu_app_bits)");
+                let map_value_b3sum = format!("({krate}::uumain, {krate}::uu_app_b3sum)");
                 phf_map.entry("md5sum", &map_value);
                 phf_map.entry("sha1sum", &map_value);
                 phf_map.entry("sha224sum", &map_value);

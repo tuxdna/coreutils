@@ -1,4 +1,8 @@
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
 
 #[test]
 fn test_invalid_arg() {
@@ -64,7 +68,7 @@ fn test_invalid_file() {
 
     at.mkdir("a");
 
-    ucmd.arg("a").fails().stderr_is("sum: a: Is a directory");
+    ucmd.arg("a").fails().stderr_is("sum: a: Is a directory\n");
 }
 
 #[test]
@@ -73,5 +77,5 @@ fn test_invalid_metadata() {
 
     ucmd.arg("b")
         .fails()
-        .stderr_is("sum: b: No such file or directory");
+        .stderr_is("sum: b: No such file or directory\n");
 }

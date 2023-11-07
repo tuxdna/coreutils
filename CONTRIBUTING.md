@@ -1,20 +1,12 @@
+<!-- spell-checker:ignore reimplementing toybox RUNTEST CARGOFLAGS nextest -->
+
 # Contributing to coreutils
 
-Contributions are very welcome, and should target Rust's main branch until the
-standard libraries are stabilized. You may *claim* an item on the to-do list by
-following these steps:
-
-1. Open an issue named "Implement [the utility of your choice]", e.g. "Implement
-   ls".
-1. State that you are working on this utility.
-1. Develop the utility.
-1. Add integration tests.
-1. Add the reference to your utility into Cargo.toml and Makefile.
-1. Remove utility from the to-do list in the README.
-1. Submit a pull request and close the issue.
-
-The steps above imply that, before starting to work on a utility, you should
-search the issues to make sure no one else is working on it.
+Contributions are very welcome via Pull Requests. If you don't know where to
+start, take a look at the
+[`good-first-issues`](https://github.com/uutils/coreutils/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22).
+If you have any questions, feel free to ask them in the issues or on
+[Discord](https://discord.gg/wQVJbvJ).
 
 ## Best practices
 
@@ -38,37 +30,75 @@ search the issues to make sure no one else is working on it.
 
 ## Platforms
 
-We take pride in supporting many operating systems and architectures. 
+We take pride in supporting many operating systems and architectures. Any code
+you contribute must at least compile without warnings for all platforms in the
+CI. However, you can use `#[cfg(...)]` attributes to create platform dependent features.
 
-**Tip:**
-For Windows, Microsoft provides some images (VMWare, Hyper-V, VirtualBox and Parallels) 
-for development:
-https://developer.microsoft.com/windows/downloads/virtual-machines/
+**Tip:** For Windows, Microsoft provides some images (VMWare, Hyper-V,
+VirtualBox and Parallels) for development:
+<https://developer.microsoft.com/windows/downloads/virtual-machines/>
 
+## Setting up your development environment
+
+To setup your local development environment for this project please follow [DEVELOPMENT.md guide](DEVELOPMENT.md)
+
+It covers [installation of necessary tools and prerequisites](DEVELOPMENT.md#tools) as well as using those tools to [test your code changes locally](DEVELOPMENT.md#testing)
+
+## Improving the GNU compatibility
+
+Please make sure you have installed [GNU utils and prerequisites](DEVELOPMENT.md#gnu-utils-and-prerequisites) and can execute commands described in [Comparing with GNU](DEVELOPMENT.md#comparing-with-gnu) section of [DEVELOPMENT.md](DEVELOPMENT.md)
+
+The Python script `./util/remaining-gnu-error.py` shows the list of failing
+tests in the CI.
+
+To improve the GNU compatibility, the following process is recommended:
+
+1. Identify a test (the smaller, the better) on a program that you understand or
+   is easy to understand. You can use the `./util/remaining-gnu-error.py` script
+   to help with this decision.
+1. Build both the GNU and Rust coreutils using: `bash util/build-gnu.sh`
+1. Run the test with `bash util/run-gnu-test.sh <your test>`
+1. Start to modify `<your test>` to understand what is wrong. Examples:
+   1. Add `set -v` to have the bash verbose mode
+   1. Add `echo $?` where needed
+   1. When the variable `fail` is used in the test, `echo $fail` to see when the
+      test started to fail
+   1. Bump the content of the output (ex: `cat err`)
+   1. ...
+1. Or, if the test is simple, extract the relevant information to create a new
+   test case running both GNU & Rust implementation
+1. Start to modify the Rust implementation to match the expected behavior
+1. Add a test to make sure that we don't regress (our test suite is super quick)
 
 ## Commit messages
 
 To help the project maintainers review pull requests from contributors across
 numerous utilities, the team has settled on conventions for commit messages.
 
-From http://git-scm.com/book/ch5-2.html:
+From <https://git-scm.com/book/ch5-2.html>:
 
 ```
-Short (50 chars or less) summary of changes
+Capitalized, short (50 chars or less) summary
 
 More detailed explanatory text, if necessary.  Wrap it to about 72
 characters or so.  In some contexts, the first line is treated as the
 subject of an email and the rest of the text as the body.  The blank
 line separating the summary from the body is critical (unless you omit
-the body entirely); tools like rebase can get confused if you run the
+the body entirely); tools like rebase will confuse you if you run the
 two together.
+
+Write your commit message in the imperative: "Fix bug" and not "Fixed bug"
+or "Fixes bug."  This convention matches up with commit messages generated
+by commands like git merge and git revert.
 
 Further paragraphs come after blank lines.
 
   - Bullet points are okay, too
 
-  - Typically a hyphen or asterisk is used for the bullet, preceded by a
+  - Typically a hyphen or asterisk is used for the bullet, followed by a
     single space, with blank lines in between, but conventions vary here
+
+  - Use a hanging indent
 ```
 
 Furthermore, here are a few examples for a summary line:
@@ -104,15 +134,25 @@ uutils: add new utility
 gitignore: add temporary files
 ```
 
-## cargo-deny
+## Code coverage
 
-This project uses [cargo-deny](https://github.com/EmbarkStudios/cargo-deny/) to
-detect duplicate dependencies, checks licenses, etc. To run it locally, first
-install it and then run with:
+To generate code coverage report locally please follow [Code coverage report](DEVELOPMENT.md#code-coverage-report) section of [DEVELOPMENT.md](DEVELOPMENT.md)
 
-```
-cargo deny --all-features check all
-```
+## Other implementations
+
+The Coreutils have different implementations, with different levels of completions:
+
+* [GNU's](https://git.savannah.gnu.org/gitweb/?p=coreutils.git)
+* [OpenBSD](https://github.com/openbsd/src/tree/master/bin)
+* [Busybox](https://github.com/mirror/busybox/tree/master/coreutils)
+* [Toybox (Android)](https://github.com/landley/toybox/tree/master/toys/posix)
+* [V lang](https://github.com/vlang/coreutils)
+* [SerenityOS](https://github.com/SerenityOS/serenity/tree/master/Userland/Utilities)
+* [Initial Unix](https://github.com/dspinellis/unix-history-repo)
+* [Perl Power Tools](https://metacpan.org/pod/PerlPowerTools)
+
+However, when reimplementing the tools/options in Rust, don't read their source codes
+when they are using reciprocal licenses (ex: GNU GPL, GNU LGPL, etc).
 
 ## Licensing
 

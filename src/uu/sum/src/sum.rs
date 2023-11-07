@@ -1,14 +1,9 @@
-// * This file is part of the uutils coreutils package.
-// *
-// * (c) T. Jameson Little <t.jameson.little@gmail.com>
-// *
-// * For the full copyright and license information, please view the LICENSE file
-// * that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) sysv
-
-#[macro_use]
-extern crate uucore;
 
 use clap::{crate_version, Arg, ArgAction, Command};
 use std::fs::File;
@@ -16,12 +11,10 @@ use std::io::{stdin, Read};
 use std::path::Path;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage, show};
 
-static NAME: &str = "sum";
-static USAGE: &str = "{} [OPTION]... [FILE]...";
-static ABOUT: &str = r#"Checksum and count the blocks in a file.
-                        With no FILE, or when  FILE is -, read standard input."#;
+const USAGE: &str = help_usage!("sum.md");
+const ABOUT: &str = help_about!("sum.md");
 
 // This can be replaced with usize::div_ceil once it is stabilized.
 // This implementation approach is optimized for when `b` is a constant,
@@ -38,8 +31,8 @@ fn bsd_sum(mut reader: Box<dyn Read>) -> (usize, u16) {
         match reader.read(&mut buf) {
             Ok(n) if n != 0 => {
                 bytes_read += n;
-                for &byte in buf[..n].iter() {
-                    checksum = (checksum >> 1) + ((checksum & 1) << 15);
+                for &byte in &buf[..n] {
+                    checksum = checksum.rotate_right(1);
                     checksum = checksum.wrapping_add(u16::from(byte));
                 }
             }
@@ -61,7 +54,7 @@ fn sysv_sum(mut reader: Box<dyn Read>) -> (usize, u16) {
         match reader.read(&mut buf) {
             Ok(n) if n != 0 => {
                 bytes_read += n;
-                for &byte in buf[..n].iter() {
+                for &byte in &buf[..n] {
                     ret = ret.wrapping_add(u32::from(byte));
                 }
             }
@@ -114,17 +107,14 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
 
     let files: Vec<String> = match matches.get_many::<String>(options::FILE) {
-        Some(v) => v.clone().map(|v| v.to_owned()).collect(),
+        Some(v) => v.cloned().collect(),
         None => vec!["-".to_owned()],
     };
 
     let sysv = matches.get_flag(options::SYSTEM_V_COMPATIBLE);
 
-    let print_names = if sysv {
-        files.len() > 1 || files[0] != "-"
-    } else {
-        files.len() > 1
-    };
+    let print_names = files.len() > 1 || files[0] != "-";
+    let width = if sysv { 1 } else { 5 };
 
     for file in &files {
         let reader = match open(file) {
@@ -141,9 +131,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         };
 
         if print_names {
-            println!("{} {} {}", sum, blocks, file);
+            println!("{sum:0width$} {blocks:width$} {file}");
         } else {
-            println!("{} {}", sum, blocks);
+            println!("{sum:0width$} {blocks:width$}");
         }
     }
     Ok(())
@@ -151,7 +141,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
-        .name(NAME)
         .version(crate_version!())
         .override_usage(format_usage(USAGE))
         .about(ABOUT)

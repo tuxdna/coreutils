@@ -1,6 +1,9 @@
-extern crate regex;
-use self::regex::Regex;
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
+use regex::Regex;
 
 #[test]
 fn test_invalid_arg() {
@@ -10,7 +13,7 @@ fn test_invalid_arg() {
 #[test]
 fn test_uptime() {
     TestScenario::new(util_name!())
-        .ucmd_keepenv()
+        .ucmd()
         .succeeds()
         .stdout_contains("load average:")
         .stdout_contains(" up ");

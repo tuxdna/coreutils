@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (vars) charf decf floatf intf scif strf Cninety
 // spell-checker:ignore (ToDO) arrnum
 
@@ -40,6 +44,7 @@ impl Intf {
     // is_zero: true if number is zero, false otherwise
     // len_digits: length of digits used to create the int
     //   important, for example, if we run into a non-valid character
+    #[allow(clippy::cognitive_complexity)]
     fn analyze(str_in: &str, signed_out: bool, initial_prefix: &InitialPrefix) -> IntAnalysis {
         // the maximum number of digits we could conceivably
         // have before the decimal point without exceeding the
@@ -121,7 +126,7 @@ impl Intf {
     // get a FormatPrimitive of the maximum value for the field char
     //  and given sign
     fn get_max(field_char: char, sign: i8) -> FormatPrimitive {
-        let mut fmt_primitive: FormatPrimitive = Default::default();
+        let mut fmt_primitive = FormatPrimitive::default();
         fmt_primitive.pre_decimal = Some(String::from(match field_char {
             'd' | 'i' => match sign {
                 1 => "9223372036854775807",
@@ -160,24 +165,24 @@ impl Intf {
         match field_char {
             'i' | 'd' => match i64::from_str_radix(segment, radix_in as u32) {
                 Ok(i) => {
-                    let mut fmt_prim: FormatPrimitive = Default::default();
+                    let mut fmt_prim = FormatPrimitive::default();
                     if sign == -1 {
                         fmt_prim.prefix = Some(String::from("-"));
                     }
-                    fmt_prim.pre_decimal = Some(format!("{}", i));
+                    fmt_prim.pre_decimal = Some(format!("{i}"));
                     fmt_prim
                 }
                 Err(_) => Self::get_max(field_char, sign),
             },
             _ => match u64::from_str_radix(segment, radix_in as u32) {
                 Ok(u) => {
-                    let mut fmt_prim: FormatPrimitive = Default::default();
+                    let mut fmt_prim = FormatPrimitive::default();
                     let u_f = if sign == -1 { u64::MAX - (u - 1) } else { u };
                     fmt_prim.pre_decimal = Some(match field_char {
-                        'X' => format!("{:X}", u_f),
-                        'x' => format!("{:x}", u_f),
-                        'o' => format!("{:o}", u_f),
-                        _ => format!("{}", u_f),
+                        'X' => format!("{u_f:X}"),
+                        'x' => format!("{u_f:x}"),
+                        'o' => format!("{u_f:o}"),
+                        _ => format!("{u_f}"),
                     });
                     fmt_prim
                 }
@@ -235,7 +240,7 @@ impl Formatter for Intf {
                 )
             } else {
                 // otherwise just do a straight string copy.
-                let mut fmt_prim: FormatPrimitive = Default::default();
+                let mut fmt_prim = FormatPrimitive::default();
 
                 // this is here and not earlier because
                 // zero doesn't get a sign, and conv_from_segment

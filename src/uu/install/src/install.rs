@@ -1,16 +1,11 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Ben Eills <ben@beneills.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE file
-//  * that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) rwxr sourcepath targetpath Isnt uioerror
 
 mod mode;
-
-#[macro_use]
-extern crate uucore;
 
 use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 use file_diff::diff;
@@ -19,10 +14,10 @@ use uucore::backup_control::{self, BackupMode};
 use uucore::display::Quotable;
 use uucore::entries::{grp2gid, usr2uid};
 use uucore::error::{FromIo, UError, UIoError, UResult, UUsageError};
-use uucore::format_usage;
 use uucore::fs::dir_strip_dot_for_creation;
 use uucore::mode::get_umask;
 use uucore::perms::{wrap_chown, Verbosity, VerbosityLevel};
+use uucore::{format_usage, help_about, help_usage, show, show_error, show_if_err, uio_error};
 
 use libc::{getegid, geteuid};
 use std::error::Error;
@@ -30,7 +25,9 @@ use std::fmt::{Debug, Display};
 use std::fs;
 use std::fs::File;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::os::unix::prelude::OsStrExt;
+use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 use std::process;
 
 const DEFAULT_MODE: u32 = 0o755;
@@ -42,8 +39,8 @@ pub struct Behavior {
     specified_mode: Option<u32>,
     backup_mode: BackupMode,
     suffix: String,
-    owner: String,
-    group: String,
+    owner_id: Option<u32>,
+    group_id: Option<u32>,
     verbose: bool,
     preserve_timestamps: bool,
     compare: bool,
@@ -59,14 +56,15 @@ enum InstallError {
     DirNeedsArg(),
     CreateDirFailed(PathBuf, std::io::Error),
     ChmodFailed(PathBuf),
+    ChownFailed(PathBuf, String),
     InvalidTarget(PathBuf),
     TargetDirIsntDir(PathBuf),
     BackupFailed(PathBuf, PathBuf, std::io::Error),
     InstallFailed(PathBuf, PathBuf, std::io::Error),
     StripProgramFailed(String),
     MetadataFailed(std::io::Error),
-    NoSuchUser(String),
-    NoSuchGroup(String),
+    InvalidUser(String),
+    InvalidGroup(String),
     OmittingDirectory(PathBuf),
 }
 
@@ -88,7 +86,7 @@ impl Error for InstallError {}
 impl Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unimplemented(opt) => write!(f, "Unimplemented feature: {}", opt),
+            Self::Unimplemented(opt) => write!(f, "Unimplemented feature: {opt}"),
             Self::DirNeedsArg() => {
                 write!(
                     f,
@@ -100,6 +98,7 @@ impl Display for InstallError {
                 Display::fmt(&uio_error!(e, "failed to create {}", dir.quote()), f)
             }
             Self::ChmodFailed(file) => write!(f, "failed to chmod {}", file.quote()),
+            Self::ChownFailed(file, msg) => write!(f, "failed to chown {}: {}", file.quote(), msg),
             Self::InvalidTarget(target) => write!(
                 f,
                 "invalid target {}: No such file or directory",
@@ -116,10 +115,10 @@ impl Display for InstallError {
                 &uio_error!(e, "cannot install {} to {}", from.quote(), to.quote()),
                 f,
             ),
-            Self::StripProgramFailed(msg) => write!(f, "strip program failed: {}", msg),
+            Self::StripProgramFailed(msg) => write!(f, "strip program failed: {msg}"),
             Self::MetadataFailed(e) => Display::fmt(&uio_error!(e, ""), f),
-            Self::NoSuchUser(user) => write!(f, "no such user: {}", user.maybe_quote()),
-            Self::NoSuchGroup(group) => write!(f, "no such group: {}", group.maybe_quote()),
+            Self::InvalidUser(user) => write!(f, "invalid user: {}", user.quote()),
+            Self::InvalidGroup(group) => write!(f, "invalid group: {}", group.quote()),
             Self::OmittingDirectory(dir) => write!(f, "omitting directory {}", dir.quote()),
         }
     }
@@ -143,9 +142,8 @@ impl Behavior {
     }
 }
 
-static ABOUT: &str = "Copy SOURCE to DEST or multiple SOURCE(s) to the existing
- DIRECTORY, while setting permission modes and owner/group";
-const USAGE: &str = "{} [OPTION]... [FILE]...";
+const ABOUT: &str = help_about!("install.md");
+const USAGE: &str = help_usage!("install.md");
 
 static OPT_COMPARE: &str = "compare";
 static OPT_DIRECTORY: &str = "directory";
@@ -377,9 +375,7 @@ fn behavior(matches: &ArgMatches) -> UResult<Behavior> {
     };
 
     let backup_mode = backup_control::determine_backup_mode(matches)?;
-    let target_dir = matches
-        .get_one::<String>(OPT_TARGET_DIRECTORY)
-        .map(|d| d.to_owned());
+    let target_dir = matches.get_one::<String>(OPT_TARGET_DIRECTORY).cloned();
 
     let preserve_timestamps = matches.get_flag(OPT_PRESERVE_TIMESTAMPS);
     let compare = matches.get_flag(OPT_COMPARE);
@@ -392,21 +388,44 @@ fn behavior(matches: &ArgMatches) -> UResult<Behavior> {
         show_error!("Options --compare and --strip are mutually exclusive");
         return Err(1.into());
     }
+
+    let owner = matches
+        .get_one::<String>(OPT_OWNER)
+        .map(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let owner_id = if owner.is_empty() {
+        None
+    } else {
+        match usr2uid(&owner) {
+            Ok(u) => Some(u),
+            Err(_) => return Err(InstallError::InvalidUser(owner.clone()).into()),
+        }
+    };
+
+    let group = matches
+        .get_one::<String>(OPT_GROUP)
+        .map(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let group_id = if group.is_empty() {
+        None
+    } else {
+        match grp2gid(&group) {
+            Ok(g) => Some(g),
+            Err(_) => return Err(InstallError::InvalidGroup(group.clone()).into()),
+        }
+    };
+
     Ok(Behavior {
         main_function,
         specified_mode,
         backup_mode,
         suffix: backup_control::determine_backup_suffix(matches),
-        owner: matches
-            .get_one::<String>(OPT_OWNER)
-            .map(|s| s.as_str())
-            .unwrap_or("")
-            .to_string(),
-        group: matches
-            .get_one::<String>(OPT_GROUP)
-            .map(|s| s.as_str())
-            .unwrap_or("")
-            .to_string(),
+        owner_id,
+        group_id,
         verbose: matches.get_flag(OPT_VERBOSE),
         preserve_timestamps,
         compare,
@@ -467,6 +486,8 @@ fn directory(paths: &[String], b: &Behavior) -> UResult<()> {
                 uucore::error::set_exit_code(1);
                 continue;
             }
+
+            show_if_err!(chown_optional_user_group(path, b));
         }
         // If the exit code was set, or show! has been called at least once
         // (which sets the exit code as well), function execution will end after
@@ -483,40 +504,74 @@ fn is_new_file_path(path: &Path) -> bool {
             || path.parent().unwrap().as_os_str().is_empty()) // In case of a simple file
 }
 
+/// Test if the path is an existing directory or ends with a trailing separator.
+///
+/// Returns true, if one of the conditions above is met; else false.
+///
+#[cfg(unix)]
+fn is_potential_directory_path(path: &Path) -> bool {
+    let separator = MAIN_SEPARATOR as u8;
+    path.as_os_str().as_bytes().last() == Some(&separator) || path.is_dir()
+}
+
+#[cfg(not(unix))]
+fn is_potential_directory_path(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    path_str.ends_with(MAIN_SEPARATOR) || path_str.ends_with('/') || path.is_dir()
+}
+
 /// Perform an install, given a list of paths and behavior.
 ///
 /// Returns a Result type with the Err variant containing the error message.
 ///
+#[allow(clippy::cognitive_complexity)]
 fn standard(mut paths: Vec<String>, b: &Behavior) -> UResult<()> {
+    // first check that paths contains at least one element
+    if paths.is_empty() {
+        return Err(UUsageError::new(1, "missing file operand"));
+    }
+
+    // get the target from either "-t foo" param or from the last given paths argument
     let target: PathBuf = if let Some(path) = &b.target_dir {
         path.into()
     } else {
-        paths
-            .pop()
-            .ok_or_else(|| UUsageError::new(1, "missing file operand"))?
-            .into()
+        let last_path: PathBuf = paths.pop().unwrap().into();
+
+        // paths has to contain more elements
+        if paths.is_empty() {
+            return Err(UUsageError::new(
+                1,
+                format!(
+                    "missing destination file operand after '{}'",
+                    last_path.to_str().unwrap()
+                ),
+            ));
+        }
+
+        last_path
     };
 
     let sources = &paths.iter().map(PathBuf::from).collect::<Vec<_>>();
 
-    if sources.len() > 1 || (target.exists() && target.is_dir()) {
-        copy_files_into_dir(sources, &target, b)
-    } else {
+    if b.create_leading {
         // if -t is used in combination with -D, create whole target because it does not include filename
-        let to_create: Option<&Path> = if b.target_dir.is_some() && b.create_leading {
+        let to_create: Option<&Path> = if b.target_dir.is_some() {
             Some(target.as_path())
-        } else {
+        // if source and target are filenames used in combination with -D, create target's parent
+        } else if !(sources.len() > 1 || is_potential_directory_path(&target)) {
             target.parent()
+        } else {
+            None
         };
 
         if let Some(to_create) = to_create {
-            if !to_create.exists() && b.create_leading {
+            if !to_create.exists() {
                 if b.verbose {
                     let mut result = PathBuf::new();
                     // When creating directories with -Dv, show directory creations step by step
                     for part in to_create.components() {
                         result.push(part.as_os_str());
-                        if !Path::new(part.as_os_str()).is_dir() {
+                        if !result.is_dir() {
                             // Don't display when the directory already exists
                             println!("install: creating directory {}", result.quote());
                         }
@@ -526,33 +581,18 @@ fn standard(mut paths: Vec<String>, b: &Behavior) -> UResult<()> {
                 if let Err(e) = fs::create_dir_all(to_create) {
                     return Err(InstallError::CreateDirFailed(to_create.to_path_buf(), e).into());
                 }
-
-                // Silent the warning as we want to the error message
-                #[allow(clippy::question_mark)]
-                if mode::chmod(to_create, b.mode()).is_err() {
-                    return Err(InstallError::ChmodFailed(to_create.to_path_buf()).into());
-                }
             }
         }
+    }
 
-        let source = sources.first().ok_or_else(|| {
-            UUsageError::new(
-                1,
-                format!(
-                    "missing destination file operand after '{}'",
-                    target.to_str().unwrap()
-                ),
-            )
-        })?;
+    if sources.len() > 1 || is_potential_directory_path(&target) {
+        copy_files_into_dir(sources, &target, b)
+    } else {
+        let source = sources.first().unwrap();
 
-        // If the -D flag was passed (target does not include filename),
-        // we need to add the source name to the target_dir
-        // because `copy` expects `to` to be a file, not a directory
-        let target = if target.is_dir() && b.create_leading {
-            target.join(source)
-        } else {
-            target // already includes dest filename
-        };
+        if source.is_dir() {
+            return Err(InstallError::OmittingDirectory(source.clone()).into());
+        }
 
         if target.is_file() || is_new_file_path(&target) {
             copy(source, &target, b)
@@ -576,7 +616,7 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
     if !target_dir.is_dir() {
         return Err(InstallError::TargetDirIsntDir(target_dir.to_path_buf()).into());
     }
-    for sourcepath in files.iter() {
+    for sourcepath in files {
         if let Err(err) = sourcepath
             .metadata()
             .map_err_context(|| format!("cannot stat {}", sourcepath.quote()))
@@ -586,7 +626,7 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
         }
 
         if sourcepath.is_dir() {
-            let err = InstallError::OmittingDirectory(sourcepath.to_path_buf());
+            let err = InstallError::OmittingDirectory(sourcepath.clone());
             show!(err);
             continue;
         }
@@ -603,6 +643,184 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
     Ok(())
 }
 
+/// Handle incomplete user/group parings for chown.
+///
+/// Returns a Result type with the Err variant containing the error message.
+///
+/// # Parameters
+///
+/// _path_ must exist.
+///
+/// # Errors
+///
+/// If the owner or group are invalid or copy system call fails, we print a verbose error and
+/// return an empty error value.
+///
+fn chown_optional_user_group(path: &Path, b: &Behavior) -> UResult<()> {
+    if b.owner_id.is_some() || b.group_id.is_some() {
+        let meta = match fs::metadata(path) {
+            Ok(meta) => meta,
+            Err(e) => return Err(InstallError::MetadataFailed(e).into()),
+        };
+
+        // GNU coreutils doesn't print chown operations during install with verbose flag.
+        let verbosity = Verbosity {
+            groups_only: b.owner_id.is_none(),
+            level: VerbosityLevel::Normal,
+        };
+
+        match wrap_chown(path, &meta, b.owner_id, b.group_id, false, verbosity) {
+            Ok(msg) if b.verbose && !msg.is_empty() => println!("chown: {msg}"),
+            Ok(_) => {}
+            Err(e) => return Err(InstallError::ChownFailed(path.to_path_buf(), e).into()),
+        }
+    }
+
+    Ok(())
+}
+
+/// Perform backup before overwriting.
+///
+/// # Parameters
+///
+/// * `to` - The destination file path.
+/// * `b` - The behavior configuration.
+///
+/// # Returns
+///
+/// Returns an Option containing the backup path, or None if backup is not needed.
+///
+fn perform_backup(to: &Path, b: &Behavior) -> UResult<Option<PathBuf>> {
+    if to.exists() {
+        if b.verbose {
+            println!("removed {}", to.quote());
+        }
+        let backup_path = backup_control::get_backup_path(b.backup_mode, to, &b.suffix);
+        if let Some(ref backup_path) = backup_path {
+            // TODO!!
+            if let Err(err) = fs::rename(to, backup_path) {
+                return Err(
+                    InstallError::BackupFailed(to.to_path_buf(), backup_path.clone(), err).into(),
+                );
+            }
+        }
+        Ok(backup_path)
+    } else {
+        Ok(None)
+    }
+}
+
+/// Copy a file from one path to another.
+///
+/// # Parameters
+///
+/// * `from` - The source file path.
+/// * `to` - The destination file path.
+///
+/// # Returns
+///
+/// Returns an empty Result or an error in case of failure.
+///
+fn copy_file(from: &Path, to: &Path) -> UResult<()> {
+    if from.as_os_str() == "/dev/null" {
+        /* workaround a limitation of fs::copy
+         * https://github.com/rust-lang/rust/issues/79390
+         */
+        if let Err(err) = File::create(to) {
+            return Err(
+                InstallError::InstallFailed(from.to_path_buf(), to.to_path_buf(), err).into(),
+            );
+        }
+    } else if let Err(err) = fs::copy(from, to) {
+        return Err(InstallError::InstallFailed(from.to_path_buf(), to.to_path_buf(), err).into());
+    }
+    Ok(())
+}
+
+/// Strip a file using an external program.
+///
+/// # Parameters
+///
+/// * `to` - The destination file path.
+/// * `b` - The behavior configuration.
+///
+/// # Returns
+///
+/// Returns an empty Result or an error in case of failure.
+///
+fn strip_file(to: &Path, b: &Behavior) -> UResult<()> {
+    match process::Command::new(&b.strip_program).arg(to).output() {
+        Ok(o) => {
+            if !o.status.success() {
+                // Follow GNU's behavior: if strip fails, removes the target
+                let _ = fs::remove_file(to);
+                return Err(InstallError::StripProgramFailed(
+                    String::from_utf8(o.stderr).unwrap_or_default(),
+                )
+                .into());
+            }
+        }
+        Err(e) => {
+            // Follow GNU's behavior: if strip fails, removes the target
+            let _ = fs::remove_file(to);
+            return Err(InstallError::StripProgramFailed(e.to_string()).into());
+        }
+    }
+    Ok(())
+}
+
+/// Set ownership and permissions on the destination file.
+///
+/// # Parameters
+///
+/// * `to` - The destination file path.
+/// * `b` - The behavior configuration.
+///
+/// # Returns
+///
+/// Returns an empty Result or an error in case of failure.
+///
+fn set_ownership_and_permissions(to: &Path, b: &Behavior) -> UResult<()> {
+    // Silent the warning as we want to the error message
+    #[allow(clippy::question_mark)]
+    if mode::chmod(to, b.mode()).is_err() {
+        return Err(InstallError::ChmodFailed(to.to_path_buf()).into());
+    }
+
+    chown_optional_user_group(to, b)?;
+
+    Ok(())
+}
+
+/// Preserve timestamps on the destination file.
+///
+/// # Parameters
+///
+/// * `from` - The source file path.
+/// * `to` - The destination file path.
+///
+/// # Returns
+///
+/// Returns an empty Result or an error in case of failure.
+///
+fn preserve_timestamps(from: &Path, to: &Path) -> UResult<()> {
+    let meta = match fs::metadata(from) {
+        Ok(meta) => meta,
+        Err(e) => return Err(InstallError::MetadataFailed(e).into()),
+    };
+
+    let modified_time = FileTime::from_last_modification_time(&meta);
+    let accessed_time = FileTime::from_last_access_time(&meta);
+
+    match set_file_times(to, accessed_time, modified_time) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            show_error!("{}", e);
+            Ok(())
+        }
+    }
+}
+
 /// Copy one file to a new location, changing metadata.
 ///
 /// Returns a Result type with the Err variant containing the error message.
@@ -616,149 +834,24 @@ fn copy_files_into_dir(files: &[PathBuf], target_dir: &Path, b: &Behavior) -> UR
 ///
 /// If the copy system call fails, we print a verbose error and return an empty error value.
 ///
-#[allow(clippy::cognitive_complexity)]
 fn copy(from: &Path, to: &Path, b: &Behavior) -> UResult<()> {
     if b.compare && !need_copy(from, to, b)? {
         return Ok(());
     }
     // Declare the path here as we may need it for the verbose output below.
-    let mut backup_path = None;
+    let backup_path = perform_backup(to, b)?;
 
-    // Perform backup, if any, before overwriting 'to'
-    //
-    // The codes actually making use of the backup process don't seem to agree
-    // on how best to approach the issue. (mv and ln, for example)
-    if to.exists() {
-        if b.verbose {
-            println!("removed {}", to.quote());
-        }
-        backup_path = backup_control::get_backup_path(b.backup_mode, to, &b.suffix);
-        if let Some(ref backup_path) = backup_path {
-            // TODO!!
-            if let Err(err) = fs::rename(to, backup_path) {
-                return Err(InstallError::BackupFailed(
-                    to.to_path_buf(),
-                    backup_path.to_path_buf(),
-                    err,
-                )
-                .into());
-            }
-        }
+    copy_file(from, to)?;
+
+    #[cfg(not(windows))]
+    if b.strip {
+        strip_file(to, b)?;
     }
 
-    if from.as_os_str() == "/dev/null" {
-        /* workaround a limitation of fs::copy
-         * https://github.com/rust-lang/rust/issues/79390
-         */
-        if let Err(err) = File::create(to) {
-            return Err(
-                InstallError::InstallFailed(from.to_path_buf(), to.to_path_buf(), err).into(),
-            );
-        }
-    } else if let Err(err) = fs::copy(from, to) {
-        return Err(InstallError::InstallFailed(from.to_path_buf(), to.to_path_buf(), err).into());
-    }
-
-    if b.strip && cfg!(not(windows)) {
-        match process::Command::new(&b.strip_program).arg(to).output() {
-            Ok(o) => {
-                if !o.status.success() {
-                    // Follow GNU's behavior: if strip fails, removes the target
-                    let _ = fs::remove_file(to);
-                    return Err(InstallError::StripProgramFailed(
-                        String::from_utf8(o.stderr).unwrap_or_default(),
-                    )
-                    .into());
-                }
-            }
-            Err(e) => {
-                // Follow GNU's behavior: if strip fails, removes the target
-                let _ = fs::remove_file(to);
-                return Err(InstallError::StripProgramFailed(e.to_string()).into());
-            }
-        }
-    }
-
-    // Silent the warning as we want to the error message
-    #[allow(clippy::question_mark)]
-    if mode::chmod(to, b.mode()).is_err() {
-        return Err(InstallError::ChmodFailed(to.to_path_buf()).into());
-    }
-
-    if !b.owner.is_empty() {
-        let meta = match fs::metadata(to) {
-            Ok(meta) => meta,
-            Err(e) => return Err(InstallError::MetadataFailed(e).into()),
-        };
-
-        let owner_id = match usr2uid(&b.owner) {
-            Ok(g) => g,
-            _ => return Err(InstallError::NoSuchUser(b.owner.clone()).into()),
-        };
-        let gid = meta.gid();
-        match wrap_chown(
-            to,
-            &meta,
-            Some(owner_id),
-            Some(gid),
-            false,
-            Verbosity {
-                groups_only: false,
-                level: VerbosityLevel::Normal,
-            },
-        ) {
-            Ok(n) => {
-                if !n.is_empty() {
-                    show_error!("{}", n);
-                }
-            }
-            Err(e) => show_error!("{}", e),
-        }
-    }
-
-    if !b.group.is_empty() {
-        let meta = match fs::metadata(to) {
-            Ok(meta) => meta,
-            Err(e) => return Err(InstallError::MetadataFailed(e).into()),
-        };
-
-        let group_id = match grp2gid(&b.group) {
-            Ok(g) => g,
-            _ => return Err(InstallError::NoSuchGroup(b.group.clone()).into()),
-        };
-        match wrap_chown(
-            to,
-            &meta,
-            Some(group_id),
-            None,
-            false,
-            Verbosity {
-                groups_only: true,
-                level: VerbosityLevel::Normal,
-            },
-        ) {
-            Ok(n) => {
-                if !n.is_empty() {
-                    show_error!("{}", n);
-                }
-            }
-            Err(e) => show_error!("{}", e),
-        }
-    }
+    set_ownership_and_permissions(to, b)?;
 
     if b.preserve_timestamps {
-        let meta = match fs::metadata(from) {
-            Ok(meta) => meta,
-            Err(e) => return Err(InstallError::MetadataFailed(e).into()),
-        };
-
-        let modified_time = FileTime::from_last_modification_time(&meta);
-        let accessed_time = FileTime::from_last_access_time(&meta);
-
-        match set_file_times(to, accessed_time, modified_time) {
-            Ok(_) => {}
-            Err(e) => show_error!("{}", e),
-        }
+        preserve_timestamps(from, to)?;
     }
 
     if b.verbose {
@@ -824,19 +917,11 @@ fn need_copy(from: &Path, to: &Path, b: &Behavior) -> UResult<bool> {
 
     // TODO: if -P (#1809) and from/to contexts mismatch, return true.
 
-    if !b.owner.is_empty() {
-        let owner_id = match usr2uid(&b.owner) {
-            Ok(id) => id,
-            _ => return Err(InstallError::NoSuchUser(b.owner.clone()).into()),
-        };
+    if let Some(owner_id) = b.owner_id {
         if owner_id != to_meta.uid() {
             return Ok(true);
         }
-    } else if !b.group.is_empty() {
-        let group_id = match grp2gid(&b.group) {
-            Ok(id) => id,
-            _ => return Err(InstallError::NoSuchGroup(b.group.clone()).into()),
-        };
+    } else if let Some(group_id) = b.group_id {
         if group_id != to_meta.gid() {
             return Ok(true);
         }

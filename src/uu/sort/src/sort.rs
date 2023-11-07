@@ -1,20 +1,13 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Michael Yin <mikeyin@mikeyin.org>
-//  * (c) Robert Swinford <robert.swinford..AT..gmail.com>
-//  * (c) Michael Debertol <michael.debertol..AT..gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // Although these links don't always seem to describe reality, check out the POSIX and GNU specs:
 // https://pubs.opengroup.org/onlinepubs/9699919799/utilities/sort.html
 // https://www.gnu.org/software/coreutils/manual/html_node/sort-invocation.html
 
 // spell-checker:ignore (misc) HFKJFK Mbdfhn
-
-#[macro_use]
-extern crate uucore;
 
 mod check;
 mod chunks;
@@ -48,26 +41,16 @@ use std::str::Utf8Error;
 use unicode_width::UnicodeWidthStr;
 use uucore::display::Quotable;
 use uucore::error::{set_exit_code, strip_errno, UError, UResult, USimpleError, UUsageError};
-use uucore::format_usage;
-use uucore::parse_size::{parse_size, ParseSizeError};
+use uucore::line_ending::LineEnding;
+use uucore::parse_size::{ParseSizeError, Parser};
 use uucore::version_cmp::version_cmp;
+use uucore::{format_usage, help_about, help_section, help_usage};
 
 use crate::tmp_dir::TmpDirWrapper;
 
-const ABOUT: &str = "\
-    Display sorted concatenation of all FILE(s). \
-    With no FILE, or when FILE is -, read standard input.";
-const USAGE: &str = "{} [OPTION]... [FILE]...";
-
-const LONG_HELP_KEYS: &str = "The key format is FIELD[.CHAR][OPTIONS][,FIELD[.CHAR]][OPTIONS].
-
-Fields by default are separated by the first whitespace after a non-whitespace character. Use -t to specify a custom separator.
-In the default case, whitespace is appended at the beginning of each field. Custom separators however are not included in fields.
-
-FIELD and CHAR both start at 1 (i.e. they are 1-indexed). If there is no end specified after a comma, the end will be the end of the line.
-If CHAR is set 0, it means the end of the field. CHAR defaults to 1 for the start position and to 0 for the end position.
-
-Valid options are: MbdfhnRrV. They override the global options for this key.";
+const ABOUT: &str = help_about!("sort.md");
+const USAGE: &str = help_usage!("sort.md");
+const AFTER_HELP: &str = help_section!("after help", "sort.md");
 
 mod options {
     pub mod modes {
@@ -188,7 +171,9 @@ impl Display for SortError {
                 line,
                 silent,
             } => {
-                if !silent {
+                if *silent {
+                    Ok(())
+                } else {
                     write!(
                         f,
                         "{}:{}: disorder: {}",
@@ -196,8 +181,6 @@ impl Display for SortError {
                         line_number,
                         line
                     )
-                } else {
-                    Ok(())
                 }
             }
             Self::OpenFailed { path, error } => {
@@ -223,13 +206,13 @@ impl Display for SortError {
                 write!(f, "failed to open temporary file: {}", strip_errno(error))
             }
             Self::CompressProgExecutionFailed { code } => {
-                write!(f, "couldn't execute compress program: errno {}", code)
+                write!(f, "couldn't execute compress program: errno {code}")
             }
             Self::CompressProgTerminatedAbnormally { prog } => {
                 write!(f, "{} terminated abnormally", prog.quote())
             }
             Self::TmpDirCreationFailed => write!(f, "could not create temporary directory"),
-            Self::Uft8Error { error } => write!(f, "{}", error),
+            Self::Uft8Error { error } => write!(f, "{error}"),
         }
     }
 }
@@ -320,7 +303,7 @@ pub struct GlobalSettings {
     selectors: Vec<FieldSelector>,
     separator: Option<char>,
     threads: String,
-    zero_terminated: bool,
+    line_ending: LineEnding,
     buffer_size: usize,
     compress_prog: Option<String>,
     merge_batch_size: usize,
@@ -345,30 +328,17 @@ impl GlobalSettings {
     fn parse_byte_count(input: &str) -> Result<usize, ParseSizeError> {
         // GNU sort (8.32)   valid: 1b,        k, K, m, M, g, G, t, T, P, E, Z, Y
         // GNU sort (8.32) invalid:  b, B, 1B,                         p, e, z, y
-        const ALLOW_LIST: &[char] = &[
-            'b', 'k', 'K', 'm', 'M', 'g', 'G', 't', 'T', 'P', 'E', 'Z', 'Y',
-        ];
-        let mut size_string = input.trim().to_string();
+        let size = Parser::default()
+            .with_allow_list(&[
+                "b", "k", "K", "m", "M", "g", "G", "t", "T", "P", "E", "Z", "Y",
+            ])
+            .with_default_unit("K")
+            .with_b_byte_count(true)
+            .parse(input.trim())?;
 
-        if size_string.ends_with(|c: char| ALLOW_LIST.contains(&c) || c.is_ascii_digit()) {
-            // b 1, K 1024 (default)
-            if size_string.ends_with(|c: char| c.is_ascii_digit()) {
-                size_string.push('K');
-            } else if size_string.ends_with('b') {
-                size_string.pop();
-            }
-            let size = parse_size(&size_string)?;
-            usize::try_from(size).map_err(|_| {
-                ParseSizeError::SizeTooBig(format!(
-                    "Buffer size {} does not fit in address space",
-                    size
-                ))
-            })
-        } else if size_string.starts_with(|c: char| c.is_ascii_digit()) {
-            Err(ParseSizeError::InvalidSuffix("invalid suffix".to_string()))
-        } else {
-            Err(ParseSizeError::ParseFailure("parse failure".to_string()))
-        }
+        usize::try_from(size).map_err(|_| {
+            ParseSizeError::SizeTooBig(format!("Buffer size {size} does not fit in address space"))
+        })
     }
 
     /// Precompute some data needed for sorting.
@@ -410,7 +380,7 @@ impl Default for GlobalSettings {
             selectors: vec![],
             separator: None,
             threads: String::new(),
-            zero_terminated: false,
+            line_ending: LineEnding::Newline,
             buffer_size: DEFAULT_BUF_SIZE,
             compress_prog: None,
             merge_batch_size: 32,
@@ -458,7 +428,7 @@ impl KeySettings {
     }
 
     fn set_sort_mode(&mut self, mode: SortMode) -> Result<(), String> {
-        if self.mode != SortMode::Default {
+        if self.mode != SortMode::Default && self.mode != mode {
             return Err(format!(
                 "options '-{}{}' are incompatible",
                 self.mode.get_short_name().unwrap(),
@@ -553,14 +523,11 @@ impl<'a> Line<'a> {
     }
 
     fn print(&self, writer: &mut impl Write, settings: &GlobalSettings) {
-        if settings.zero_terminated && !settings.debug {
-            writer.write_all(self.line.as_bytes()).unwrap();
-            writer.write_all(b"\0").unwrap();
-        } else if !settings.debug {
-            writer.write_all(self.line.as_bytes()).unwrap();
-            writer.write_all(b"\n").unwrap();
-        } else {
+        if settings.debug {
             self.print_debug(settings, writer).unwrap();
+        } else {
+            writer.write_all(self.line.as_bytes()).unwrap();
+            writer.write_all(&[settings.line_ending.into()]).unwrap();
         }
     }
 
@@ -576,7 +543,7 @@ impl<'a> Line<'a> {
         // optimizations here.
 
         let line = self.line.replace('\t', ">");
-        writeln!(writer, "{}", line)?;
+        writeln!(writer, "{line}")?;
 
         let mut fields = vec![];
         tokenize(self.line, settings.separator, &mut fields);
@@ -598,7 +565,15 @@ impl<'a> Line<'a> {
                     selection.start += num_range.start;
                     selection.end = selection.start + num_range.len();
 
-                    if num_range != (0..0) {
+                    if num_range == (0..0) {
+                        // This was not a valid number.
+                        // Report no match at the first non-whitespace character.
+                        let leading_whitespace = self.line[selection.clone()]
+                            .find(|c: char| !c.is_whitespace())
+                            .unwrap_or(0);
+                        selection.start += leading_whitespace;
+                        selection.end += leading_whitespace;
+                    } else {
                         // include a trailing si unit
                         if selector.settings.mode == SortMode::HumanNumeric
                             && self.line[selection.end..initial_selection.end]
@@ -613,14 +588,6 @@ impl<'a> Line<'a> {
                         {
                             selection.start -= 1;
                         }
-                    } else {
-                        // This was not a valid number.
-                        // Report no match at the first non-whitespace character.
-                        let leading_whitespace = self.line[selection.clone()]
-                            .find(|c: char| !c.is_whitespace())
-                            .unwrap_or(0);
-                        selection.start += leading_whitespace;
-                        selection.end += leading_whitespace;
                     }
                 }
                 SortMode::GeneralNumeric => {
@@ -689,7 +656,7 @@ impl<'a> Line<'a> {
                 || settings
                     .selectors
                     .last()
-                    .map_or(true, |selector| selector != &Default::default()))
+                    .map_or(true, |selector| selector != &FieldSelector::default()))
         {
             // A last resort comparator is in use, underline the whole line.
             if self.line.is_empty() {
@@ -879,7 +846,7 @@ impl FieldSelector {
                     'R' => key_settings.set_sort_mode(SortMode::Random)?,
                     'r' => key_settings.reverse = true,
                     'V' => key_settings.set_sort_mode(SortMode::Version)?,
-                    c => return Err(format!("invalid option: '{}'", c)),
+                    c => return Err(format!("invalid option: '{c}'")),
                 }
             }
             Ok(ignore_blanks)
@@ -955,7 +922,7 @@ impl FieldSelector {
 
     /// Look up the range in the line that corresponds to this selector.
     /// If needs_fields returned false, tokens must be None.
-    fn get_range<'a>(&self, line: &'a str, tokens: Option<&[Field]>) -> Range<usize> {
+    fn get_range(&self, line: &str, tokens: Option<&[Field]>) -> Range<usize> {
         enum Resolution {
             // The start index of the resolved character, inclusive
             StartOfChar(usize),
@@ -1060,9 +1027,10 @@ fn make_sort_mode_arg(mode: &'static str, short: char, help: &'static str) -> Ar
 }
 
 #[uucore::main]
+#[allow(clippy::cognitive_complexity)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let args = args.collect_ignore();
-    let mut settings: GlobalSettings = Default::default();
+    let mut settings = GlobalSettings::default();
 
     let matches = match uu_app().try_get_matches_from(args) {
         Ok(t) => t,
@@ -1195,7 +1163,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         })?;
     }
 
-    settings.zero_terminated = matches.get_flag(options::ZERO_TERMINATED);
+    settings.line_ending = LineEnding::from_zero_flag(matches.get_flag(options::ZERO_TERMINATED));
     settings.merge = matches.get_flag(options::MERGE);
 
     settings.check = matches.contains_id(options::check::CHECK);
@@ -1204,7 +1172,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             matches
                 .get_one::<String>(options::check::CHECK)
                 .map(|s| s.as_str()),
-            Some(options::check::SILENT) | Some(options::check::QUIET)
+            Some(options::check::SILENT | options::check::QUIET)
         )
     {
         settings.check_silent = true;
@@ -1308,7 +1276,7 @@ pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
         .version(crate_version!())
         .about(ABOUT)
-        .after_help(LONG_HELP_KEYS)
+        .after_help(AFTER_HELP)
         .override_usage(format_usage(USAGE))
         .infer_long_args(true)
         .disable_help_flag(true)
@@ -1336,7 +1304,7 @@ pub fn uu_app() -> Command {
                     "version",
                     "random",
                 ])
-                .conflicts_with_all(&options::modes::ALL_SORT_MODES),
+                .conflicts_with_all(options::modes::ALL_SORT_MODES),
         )
         .arg(make_sort_mode_arg(
             options::modes::HUMAN_NUMERIC,
@@ -1373,7 +1341,7 @@ pub fn uu_app() -> Command {
                 .short('d')
                 .long(options::DICTIONARY_ORDER)
                 .help("consider only blanks and alphanumeric characters")
-                .conflicts_with_all(&[
+                .conflicts_with_all([
                     options::modes::NUMERIC,
                     options::modes::GENERAL_NUMERIC,
                     options::modes::HUMAN_NUMERIC,
@@ -1425,7 +1393,7 @@ pub fn uu_app() -> Command {
                 .short('i')
                 .long(options::IGNORE_NONPRINTING)
                 .help("ignore nonprinting characters")
-                .conflicts_with_all(&[
+                .conflicts_with_all([
                     options::modes::NUMERIC,
                     options::modes::GENERAL_NUMERIC,
                     options::modes::HUMAN_NUMERIC,
@@ -1588,10 +1556,7 @@ fn compare_by<'a>(
     let mut num_info_index = 0;
     let mut parsed_float_index = 0;
     for selector in &global_settings.selectors {
-        let (a_str, b_str) = if !selector.needs_selection {
-            // We can select the whole line.
-            (a.line, b.line)
-        } else {
+        let (a_str, b_str) = if selector.needs_selection {
             let selections = (
                 a_line_data.selections
                     [a.index * global_settings.precomputed.selections_per_line + selection_index],
@@ -1600,6 +1565,9 @@ fn compare_by<'a>(
             );
             selection_index += 1;
             selections
+        } else {
+            // We can select the whole line.
+            (a.line, b.line)
         };
 
         let settings = &selector.settings;
@@ -1681,6 +1649,7 @@ fn compare_by<'a>(
 // In contrast to numeric compare, GNU general numeric/FP sort *should* recognize positive signs and
 // scientific notation, so we strip those lines only after the end of the following numeric string.
 // For example, 5e10KFD would be 5e10 or 5x10^10 and +10000HFKJFK would become 10000.
+#[allow(clippy::cognitive_complexity)]
 fn get_leading_gen(input: &str) -> Range<usize> {
     let trimmed = input.trim_start();
     let leading_whitespace_len = input.len() - trimmed.len();
@@ -1698,7 +1667,7 @@ fn get_leading_gen(input: &str) -> Range<usize> {
 
     let first = char_indices.peek();
 
-    if matches!(first, Some((_, NEGATIVE)) | Some((_, POSITIVE))) {
+    if matches!(first, Some((_, NEGATIVE) | (_, POSITIVE))) {
         char_indices.next();
     }
 
@@ -1774,7 +1743,7 @@ fn get_rand_string() -> [u8; 16] {
 }
 
 fn get_hash<T: Hash>(t: &T) -> u64 {
-    let mut s: FnvHasher = Default::default();
+    let mut s = FnvHasher::default();
     t.hash(&mut s);
     s.finish()
 }

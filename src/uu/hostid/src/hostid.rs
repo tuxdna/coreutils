@@ -1,18 +1,16 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Maciej Dziardziel <fiedzia@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE file
-//  * that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) gethostid
 
 use clap::{crate_version, Command};
 use libc::c_long;
-use uucore::{error::UResult, format_usage};
+use uucore::{error::UResult, format_usage, help_about, help_usage};
 
-const USAGE: &str = "{} [options]";
-const ABOUT: &str = "Print the numeric identifier (in hexadecimal) for the current host";
+const USAGE: &str = help_usage!("hostid.md");
+const ABOUT: &str = help_about!("hostid.md");
 
 // currently rust libc interface doesn't include gethostid
 extern "C" {
@@ -50,5 +48,5 @@ fn hostid() {
     let mask = 0xffff_ffff;
 
     result &= mask;
-    println!("{:0>8x}", result);
+    println!("{result:0>8x}");
 }

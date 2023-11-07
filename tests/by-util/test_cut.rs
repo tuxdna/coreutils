@@ -1,4 +1,8 @@
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
 
 static INPUT: &str = "lists.txt";
 
@@ -79,6 +83,46 @@ fn test_field_sequence() {
                 .stdout_only_fixture(format!("sequences/field_{}.expected", example_seq.name));
         }
     }
+}
+
+#[test]
+fn test_whitespace_delimited() {
+    new_ucmd!()
+        .args(&["-w", "-f", COMPLEX_SEQUENCE.sequence, INPUT])
+        .succeeds()
+        .stdout_only_fixture("whitespace_delimited.expected");
+}
+
+#[test]
+fn test_whitespace_with_explicit_delimiter() {
+    new_ucmd!()
+        .args(&["-w", "-f", COMPLEX_SEQUENCE.sequence, "-d:"])
+        .fails()
+        .code_is(1);
+}
+
+#[test]
+fn test_whitespace_with_byte() {
+    new_ucmd!()
+        .args(&["-w", "-b", COMPLEX_SEQUENCE.sequence])
+        .fails()
+        .code_is(1);
+}
+
+#[test]
+fn test_whitespace_with_char() {
+    new_ucmd!()
+        .args(&["-c", COMPLEX_SEQUENCE.sequence, "-w"])
+        .fails()
+        .code_is(1);
+}
+
+#[test]
+fn test_too_large() {
+    new_ucmd!()
+        .args(&["-b1-18446744073709551615", "/dev/null"])
+        .fails()
+        .code_is(1);
 }
 
 #[test]

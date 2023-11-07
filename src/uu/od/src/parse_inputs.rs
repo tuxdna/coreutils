@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use super::options;
 use clap::ArgMatches;
 
@@ -90,8 +94,8 @@ pub fn parse_inputs(matches: &dyn CommandLineOpts) -> Result<CommandLineInputs, 
 
 /// interprets inputs when --traditional is on the command line
 ///
-/// normally returns CommandLineInputs::FileAndOffset, but if no offset is found,
-/// it returns CommandLineInputs::FileNames (also to differentiate from the offset == 0)
+/// normally returns `CommandLineInputs::FileAndOffset`, but if no offset is found,
+/// it returns `CommandLineInputs::FileNames` (also to differentiate from the offset == 0)
 pub fn parse_inputs_traditional(input_strings: &[&str]) -> Result<CommandLineInputs, String> {
     match input_strings.len() {
         0 => Ok(CommandLineInputs::FileNames(vec!["-".to_string()])),
@@ -209,6 +213,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_parse_inputs_with_offset() {
         // offset is found without filename, so stdin will be used.
         assert_eq!(
@@ -351,6 +356,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_parse_offset_operand() {
         assert_eq!(8, parse_offset_operand_str("10").unwrap()); // default octal
         assert_eq!(0, parse_offset_operand_str("0").unwrap());

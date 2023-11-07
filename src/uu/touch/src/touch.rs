@@ -1,38 +1,35 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Nick Platt <platt.nicholas@gmail.com>
-// (c) Jian Zeng <anonymousknight96 AT gmail.com>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
-// spell-checker:ignore (ToDO) filetime strptime utcoff strs datetime MMDDhhmm clapv PWSTR lpszfilepath hresult mktime YYYYMMDDHHMM YYMMDDHHMM DATETIME YYYYMMDDHHMMS subsecond
-pub extern crate filetime;
+// spell-checker:ignore (ToDO) filetime datetime lpszfilepath mktime DATETIME datelike timelike
+// spell-checker:ignore (FORMATS) MMDDhhmm YYYYMMDDHHMM YYMMDDHHMM YYYYMMDDHHMMS
 
-#[macro_use]
-extern crate uucore;
-
+use chrono::{
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
+    TimeZone, Timelike,
+};
 use clap::builder::ValueParser;
 use clap::{crate_version, Arg, ArgAction, ArgGroup, Command};
-use filetime::*;
+use filetime::{set_file_times, set_symlink_file_times, FileTime};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use time::macros::{format_description, offset, time};
-use time::Duration;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UError, UResult, USimpleError};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage, show};
 
-static ABOUT: &str = "Update the access and modification times of each FILE to the current time.";
-const USAGE: &str = "{} [OPTION]... [USER]";
+const ABOUT: &str = help_about!("touch.md");
+const USAGE: &str = help_usage!("touch.md");
+
 pub mod options {
     // Both SOURCES and sources are needed as we need to be able to refer to the ArgGroup.
     pub static SOURCES: &str = "sources";
     pub mod sources {
         pub static DATE: &str = "date";
         pub static REFERENCE: &str = "reference";
-        pub static CURRENT: &str = "current";
+        pub static TIMESTAMP: &str = "timestamp";
     }
     pub static HELP: &str = "help";
     pub static ACCESS: &str = "access";
@@ -44,53 +41,82 @@ pub mod options {
 
 static ARG_FILES: &str = "files";
 
-// Convert a date/time to a date with a TZ offset
-fn to_local(tm: time::PrimitiveDateTime) -> time::OffsetDateTime {
-    let offset = match time::OffsetDateTime::now_local() {
-        Ok(lo) => lo.offset(),
-        Err(e) => {
-            panic!("error: {}", e);
-        }
-    };
-    tm.assume_offset(offset)
+mod format {
+    pub(crate) const POSIX_LOCALE: &str = "%a %b %e %H:%M:%S %Y";
+    pub(crate) const ISO_8601: &str = "%Y-%m-%d";
+    // "%Y%m%d%H%M.%S" 15 chars
+    pub(crate) const YYYYMMDDHHMM_DOT_SS: &str = "%Y%m%d%H%M.%S";
+    // "%Y-%m-%d %H:%M:%S.%SS" 12 chars
+    pub(crate) const YYYYMMDDHHMMSS: &str = "%Y-%m-%d %H:%M:%S.%f";
+    // "%Y-%m-%d %H:%M:%S" 12 chars
+    pub(crate) const YYYYMMDDHHMMS: &str = "%Y-%m-%d %H:%M:%S";
+    // "%Y-%m-%d %H:%M" 12 chars
+    // Used for example in tests/touch/no-rights.sh
+    pub(crate) const YYYY_MM_DD_HH_MM: &str = "%Y-%m-%d %H:%M";
+    // "%Y%m%d%H%M" 12 chars
+    pub(crate) const YYYYMMDDHHMM: &str = "%Y%m%d%H%M";
+    // "%Y-%m-%d %H:%M +offset"
+    // Used for example in tests/touch/relative.sh
+    pub(crate) const YYYYMMDDHHMM_OFFSET: &str = "%Y-%m-%d %H:%M %z";
 }
 
-// Convert a date/time with a TZ offset into a FileTime
-fn local_dt_to_filetime(dt: time::OffsetDateTime) -> FileTime {
-    FileTime::from_unix_time(dt.unix_timestamp(), dt.nanosecond())
+/// Convert a DateTime with a TZ offset into a FileTime
+///
+/// The DateTime is converted into a unix timestamp from which the FileTime is
+/// constructed.
+fn datetime_to_filetime<T: TimeZone>(dt: &DateTime<T>) -> FileTime {
+    FileTime::from_unix_time(dt.timestamp(), dt.timestamp_subsec_nanos())
 }
 
-// Convert a date/time, considering that the input is in UTC time
-// Used for touch -d 1970-01-01 18:43:33.023456789 for example
-fn dt_to_filename(tm: time::PrimitiveDateTime) -> FileTime {
-    let dt = tm.assume_offset(offset!(UTC));
-    local_dt_to_filetime(dt)
+fn filetime_to_datetime(ft: &FileTime) -> Option<DateTime<Local>> {
+    Some(DateTime::from_timestamp(ft.unix_seconds(), ft.nanoseconds())?.into())
 }
 
 #[uucore::main]
+#[allow(clippy::cognitive_complexity)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
 
     let files = matches.get_many::<OsString>(ARG_FILES).ok_or_else(|| {
         USimpleError::new(
             1,
-            r##"missing file operand
-Try 'touch --help' for more information."##,
+            format!(
+                "missing file operand\nTry '{} --help' for more information.",
+                uucore::execution_phrase()
+            ),
         )
     })?;
-    let (mut atime, mut mtime) =
-        if let Some(reference) = matches.get_one::<OsString>(options::sources::REFERENCE) {
+    let (mut atime, mut mtime) = match (
+        matches.get_one::<OsString>(options::sources::REFERENCE),
+        matches.get_one::<String>(options::sources::DATE),
+    ) {
+        (Some(reference), Some(date)) => {
+            let (atime, mtime) = stat(Path::new(reference), !matches.get_flag(options::NO_DEREF))?;
+            let atime = filetime_to_datetime(&atime).ok_or_else(|| {
+                USimpleError::new(1, "Could not process the reference access time")
+            })?;
+            let mtime = filetime_to_datetime(&mtime).ok_or_else(|| {
+                USimpleError::new(1, "Could not process the reference modification time")
+            })?;
+            (parse_date(atime, date)?, parse_date(mtime, date)?)
+        }
+        (Some(reference), None) => {
             stat(Path::new(reference), !matches.get_flag(options::NO_DEREF))?
-        } else {
-            let timestamp = if let Some(date) = matches.get_one::<String>(options::sources::DATE) {
-                parse_date(date)?
-            } else if let Some(current) = matches.get_one::<String>(options::sources::CURRENT) {
-                parse_timestamp(current)?
+        }
+        (None, Some(date)) => {
+            let timestamp = parse_date(Local::now(), date)?;
+            (timestamp, timestamp)
+        }
+        (None, None) => {
+            let timestamp = if let Some(ts) = matches.get_one::<String>(options::sources::TIMESTAMP)
+            {
+                parse_timestamp(ts)?
             } else {
-                local_dt_to_filetime(time::OffsetDateTime::now_local().unwrap())
+                datetime_to_filetime(&Local::now())
             };
             (timestamp, timestamp)
-        };
+        }
+    };
 
     for filename in files {
         // FIXME: find a way to avoid having to clone the path
@@ -102,7 +128,13 @@ Try 'touch --help' for more information."##,
 
         let path = pathbuf.as_path();
 
-        if let Err(e) = path.metadata() {
+        let metadata_result = if matches.get_flag(options::NO_DEREF) {
+            path.symlink_metadata()
+        } else {
+            path.metadata()
+        };
+
+        if let Err(e) = metadata_result {
             if e.kind() != std::io::ErrorKind::NotFound {
                 return Err(e.map_err_context(|| format!("setting times of {}", filename.quote())));
             }
@@ -161,14 +193,21 @@ Try 'touch --help' for more information."##,
             }
         }
 
-        if matches.get_flag(options::NO_DEREF) {
+        // sets the file access and modification times for a file or a symbolic link.
+        // The filename, access time (atime), and modification time (mtime) are provided as inputs.
+
+        // If the filename is not "-", indicating a special case for touch -h -,
+        // the code checks if the NO_DEREF flag is set, which means the user wants to
+        // set the times for a symbolic link itself, rather than the file it points to.
+        if filename == "-" {
+            filetime::set_file_times(path, atime, mtime)
+        } else if matches.get_flag(options::NO_DEREF) {
             set_symlink_file_times(path, atime, mtime)
         } else {
-            filetime::set_file_times(path, atime, mtime)
+            set_file_times(path, atime, mtime)
         }
         .map_err_context(|| format!("setting times of {}", path.quote()))?;
     }
-
     Ok(())
 }
 
@@ -192,7 +231,7 @@ pub fn uu_app() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
-            Arg::new(options::sources::CURRENT)
+            Arg::new(options::sources::TIMESTAMP)
                 .short('t')
                 .help("use [[CC]YY]MMDDhhmm[.ss] instead of the current time")
                 .value_name("STAMP"),
@@ -201,8 +240,10 @@ pub fn uu_app() -> Command {
             Arg::new(options::sources::DATE)
                 .short('d')
                 .long(options::sources::DATE)
+                .allow_hyphen_values(true)
                 .help("parse argument and use it instead of current time")
-                .value_name("STRING"),
+                .value_name("STRING")
+                .conflicts_with(options::sources::TIMESTAMP),
         )
         .arg(
             Arg::new(options::MODIFICATION)
@@ -234,7 +275,8 @@ pub fn uu_app() -> Command {
                 .help("use this file's times instead of the current time")
                 .value_name("FILE")
                 .value_parser(ValueParser::os_string())
-                .value_hint(clap::ValueHint::AnyPath),
+                .value_hint(clap::ValueHint::AnyPath)
+                .conflicts_with(options::sources::TIMESTAMP),
         )
         .arg(
             Arg::new(options::TIME)
@@ -245,7 +287,7 @@ pub fn uu_app() -> Command {
                      equivalent to -m",
                 )
                 .value_name("WORD")
-                .value_parser(["access", "atime", "use"]),
+                .value_parser(["access", "atime", "use", "modify", "mtime"]),
         )
         .arg(
             Arg::new(ARG_FILES)
@@ -254,20 +296,27 @@ pub fn uu_app() -> Command {
                 .value_parser(ValueParser::os_string())
                 .value_hint(clap::ValueHint::AnyPath),
         )
-        .group(ArgGroup::new(options::SOURCES).args(&[
-            options::sources::CURRENT,
-            options::sources::DATE,
-            options::sources::REFERENCE,
-        ]))
+        .group(
+            ArgGroup::new(options::SOURCES)
+                .args([
+                    options::sources::TIMESTAMP,
+                    options::sources::DATE,
+                    options::sources::REFERENCE,
+                ])
+                .multiple(true),
+        )
 }
 
+// Get metadata of the provided path
+// If `follow` is `true`, the function will try to follow symlinks
+// If `follow` is `false` or the symlink is broken, the function will return metadata of the symlink itself
 fn stat(path: &Path, follow: bool) -> UResult<(FileTime, FileTime)> {
-    let metadata = if follow {
-        fs::symlink_metadata(path)
-    } else {
-        fs::metadata(path)
-    }
-    .map_err_context(|| format!("failed to get attributes of {}", path.quote()))?;
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && !follow => fs::symlink_metadata(path)
+            .map_err_context(|| format!("failed to get attributes of {}", path.quote()))?,
+        Err(e) => return Err(e.into()),
+    };
 
     Ok((
         FileTime::from_last_access_time(&metadata),
@@ -275,65 +324,7 @@ fn stat(path: &Path, follow: bool) -> UResult<(FileTime, FileTime)> {
     ))
 }
 
-const POSIX_LOCALE_FORMAT: &[time::format_description::FormatItem] = format_description!(
-    "[weekday repr:short] [month repr:short] [day padding:space] \
-    [hour]:[minute]:[second] [year]"
-);
-
-const ISO_8601_FORMAT: &[time::format_description::FormatItem] =
-    format_description!("[year]-[month]-[day]");
-
-// "%Y%m%d%H%M.%S" 15 chars
-const YYYYMMDDHHMM_DOT_SS_FORMAT: &[time::format_description::FormatItem] = format_description!(
-    "[year repr:full][month repr:numerical padding:zero]\
-    [day][hour][minute].[second]"
-);
-
-// "%Y-%m-%d %H:%M:%S.%SS" 12 chars
-const YYYYMMDDHHMMSS_FORMAT: &[time::format_description::FormatItem] = format_description!(
-    "[year repr:full]-[month repr:numerical padding:zero]-\
-    [day] [hour]:[minute]:[second].[subsecond]"
-);
-
-// "%Y-%m-%d %H:%M:%S" 12 chars
-const YYYYMMDDHHMMS_FORMAT: &[time::format_description::FormatItem] = format_description!(
-    "[year repr:full]-[month repr:numerical padding:zero]-\
-    [day] [hour]:[minute]:[second]"
-);
-
-// "%Y-%m-%d %H:%M" 12 chars
-// Used for example in tests/touch/no-rights.sh
-const YYYY_MM_DD_HH_MM_FORMAT: &[time::format_description::FormatItem] = format_description!(
-    "[year repr:full]-[month repr:numerical padding:zero]-\
-    [day] [hour]:[minute]"
-);
-
-// "%Y%m%d%H%M" 12 chars
-const YYYYMMDDHHMM_FORMAT: &[time::format_description::FormatItem] = format_description!(
-    "[year repr:full][month repr:numerical padding:zero]\
-    [day][hour][minute]"
-);
-
-// "%y%m%d%H%M.%S" 13 chars
-const YYMMDDHHMM_DOT_SS_FORMAT: &[time::format_description::FormatItem] = format_description!(
-    "[year repr:last_two padding:none][month][day]\
-    [hour][minute].[second]"
-);
-
-// "%y%m%d%H%M" 10 chars
-const YYMMDDHHMM_FORMAT: &[time::format_description::FormatItem] = format_description!(
-    "[year repr:last_two padding:none][month padding:zero][day padding:zero]\
-    [hour repr:24 padding:zero][minute padding:zero]"
-);
-
-// "%Y-%m-%d %H:%M +offset"
-// Used for example in tests/touch/relative.sh
-const YYYYMMDDHHMM_OFFSET_FORMAT: &[time::format_description::FormatItem] = format_description!(
-    "[year]-[month]-[day] [hour repr:24]:[minute] \
-    [offset_hour sign:mandatory][offset_minute]"
-);
-
-fn parse_date(s: &str) -> UResult<FileTime> {
+fn parse_date(ref_time: DateTime<Local>, s: &str) -> UResult<FileTime> {
     // This isn't actually compatible with GNU touch, but there doesn't seem to
     // be any simple specification for what format this parameter allows and I'm
     // not about to implement GNU parse_datetime.
@@ -348,56 +339,60 @@ fn parse_date(s: &str) -> UResult<FileTime> {
     // Tue Dec  3 ...
     // ("%c", POSIX_LOCALE_FORMAT),
     //
-    if let Ok(parsed) = time::PrimitiveDateTime::parse(s, &POSIX_LOCALE_FORMAT) {
-        return Ok(local_dt_to_filetime(to_local(parsed)));
+    if let Ok(parsed) = NaiveDateTime::parse_from_str(s, format::POSIX_LOCALE) {
+        return Ok(datetime_to_filetime(&parsed.and_utc()));
     }
 
     // Also support other formats found in the GNU tests like
     // in tests/misc/stat-nanoseconds.sh
     // or tests/touch/no-rights.sh
     for fmt in [
-        YYYYMMDDHHMMS_FORMAT,
-        YYYYMMDDHHMMSS_FORMAT,
-        YYYY_MM_DD_HH_MM_FORMAT,
-        YYYYMMDDHHMM_OFFSET_FORMAT,
+        format::YYYYMMDDHHMMS,
+        format::YYYYMMDDHHMMSS,
+        format::YYYY_MM_DD_HH_MM,
+        format::YYYYMMDDHHMM_OFFSET,
     ] {
-        if let Ok(parsed) = time::PrimitiveDateTime::parse(s, &fmt) {
-            return Ok(dt_to_filename(parsed));
+        if let Ok(parsed) = NaiveDateTime::parse_from_str(s, fmt) {
+            return Ok(datetime_to_filetime(&parsed.and_utc()));
         }
     }
 
     // "Equivalent to %Y-%m-%d (the ISO 8601 date format). (C99)"
     // ("%F", ISO_8601_FORMAT),
-    if let Ok(parsed) = time::Date::parse(s, &ISO_8601_FORMAT) {
-        return Ok(local_dt_to_filetime(to_local(
-            time::PrimitiveDateTime::new(parsed, time!(00:00)),
-        )));
+    if let Ok(parsed_date) = NaiveDate::parse_from_str(s, format::ISO_8601) {
+        let parsed = Local
+            .from_local_datetime(&parsed_date.and_time(NaiveTime::MIN))
+            .unwrap();
+        return Ok(datetime_to_filetime(&parsed));
     }
 
     // "@%s" is "The number of seconds since the Epoch, 1970-01-01 00:00:00 +0000 (UTC). (TZ) (Calculated from mktime(tm).)"
     if s.bytes().next() == Some(b'@') {
         if let Ok(ts) = &s[1..].parse::<i64>() {
-            // Don't convert to local time in this case - seconds since epoch are not time-zone dependent
-            return Ok(local_dt_to_filetime(
-                time::OffsetDateTime::from_unix_timestamp(*ts).unwrap(),
-            ));
+            return Ok(FileTime::from_unix_time(*ts, 0));
         }
     }
 
-    Err(USimpleError::new(1, format!("Unable to parse date: {}", s)))
+    if let Ok(dt) = parse_datetime::parse_datetime_at_date(ref_time, s) {
+        return Ok(datetime_to_filetime(&dt));
+    }
+
+    Err(USimpleError::new(1, format!("Unable to parse date: {s}")))
 }
 
 fn parse_timestamp(s: &str) -> UResult<FileTime> {
-    // TODO: handle error
-    let now = time::OffsetDateTime::now_utc();
+    use format::*;
 
-    let (mut format, mut ts) = match s.chars().count() {
-        15 => (YYYYMMDDHHMM_DOT_SS_FORMAT, s.to_owned()),
-        12 => (YYYYMMDDHHMM_FORMAT, s.to_owned()),
-        13 => (YYMMDDHHMM_DOT_SS_FORMAT, s.to_owned()),
-        10 => (YYMMDDHHMM_FORMAT, s.to_owned()),
-        11 => (YYYYMMDDHHMM_DOT_SS_FORMAT, format!("{}{}", now.year(), s)),
-        8 => (YYYYMMDDHHMM_FORMAT, format!("{}{}", now.year(), s)),
+    let current_year = || Local::now().year();
+
+    let (format, ts) = match s.chars().count() {
+        15 => (YYYYMMDDHHMM_DOT_SS, s.to_owned()),
+        12 => (YYYYMMDDHHMM, s.to_owned()),
+        // If we don't add "20", we have insufficient information to parse
+        13 => (YYYYMMDDHHMM_DOT_SS, format!("20{}", s)),
+        10 => (YYYYMMDDHHMM, format!("20{}", s)),
+        11 => (YYYYMMDDHHMM_DOT_SS, format!("{}{}", current_year(), s)),
+        8 => (YYYYMMDDHHMM, format!("{}{}", current_year(), s)),
         _ => {
             return Err(USimpleError::new(
                 1,
@@ -405,54 +400,41 @@ fn parse_timestamp(s: &str) -> UResult<FileTime> {
             ))
         }
     };
-    // workaround time returning Err(TryFromParsed(InsufficientInformation)) for year w/
-    // repr:last_two
-    // https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=1ccfac7c07c5d1c7887a11decf0e1996
-    if s.chars().count() == 10 {
-        format = YYYYMMDDHHMM_FORMAT;
-        ts = "20".to_owned() + &ts;
-    } else if s.chars().count() == 13 {
-        format = YYYYMMDDHHMM_DOT_SS_FORMAT;
-        ts = "20".to_owned() + &ts;
-    }
 
-    let leap_sec = if (format == YYYYMMDDHHMM_DOT_SS_FORMAT || format == YYMMDDHHMM_DOT_SS_FORMAT)
-        && ts.ends_with(".60")
-    {
-        // Work around to disable leap seconds
-        // Used in gnu/tests/touch/60-seconds
-        ts = ts.replace(".60", ".59");
-        true
-    } else {
-        false
+    let local = NaiveDateTime::parse_from_str(&ts, format)
+        .map_err(|_| USimpleError::new(1, format!("invalid date ts format {}", ts.quote())))?;
+    let mut local = match chrono::Local.from_local_datetime(&local) {
+        LocalResult::Single(dt) => dt,
+        _ => {
+            return Err(USimpleError::new(
+                1,
+                format!("invalid date ts format {}", ts.quote()),
+            ))
+        }
     };
 
-    let tm = time::PrimitiveDateTime::parse(&ts, &format)
-        .map_err(|_| USimpleError::new(1, format!("invalid date ts format {}", ts.quote())))?;
-    let mut local = to_local(tm);
-    if leap_sec {
-        // We are dealing with a leap second, add it
-        local = local.saturating_add(Duration::SECOND);
+    // Chrono caps seconds at 59, but 60 is valid. It might be a leap second
+    // or wrap to the next minute. But that doesn't really matter, because we
+    // only care about the timestamp anyway.
+    // Tested in gnu/tests/touch/60-seconds
+    if local.second() == 59 && ts.ends_with(".60") {
+        local += Duration::seconds(1);
     }
-    let ft = local_dt_to_filetime(local);
 
-    // // We have to check that ft is valid time. Due to daylight saving
-    // // time switch, local time can jump from 1:59 AM to 3:00 AM,
-    // // in which case any time between 2:00 AM and 2:59 AM is not valid.
-    // // Convert back to local time and see if we got the same value back.
-    // let ts = time::Timespec {
-    //     sec: ft.unix_seconds(),
-    //     nsec: 0,
-    // };
-    // let tm2 = time::at(ts);
-    // if tm.tm_hour != tm2.tm_hour {
-    //     return Err(USimpleError::new(
-    //         1,
-    //         format!("invalid date format {}", s.quote()),
-    //     ));
-    // }
+    // Due to daylight saving time switch, local time can jump from 1:59 AM to
+    // 3:00 AM, in which case any time between 2:00 AM and 2:59 AM is not
+    // valid. If we are within this jump, chrono takes the offset from before
+    // the jump. If we then jump forward an hour, we get the new corrected
+    // offset. Jumping back will then now correctly take the jump into account.
+    let local2 = local + Duration::hours(1) - Duration::hours(1);
+    if local.hour() != local2.hour() {
+        return Err(USimpleError::new(
+            1,
+            format!("invalid date format {}", s.quote()),
+        ));
+    }
 
-    Ok(ft)
+    Ok(datetime_to_filetime(&local))
 }
 
 // TODO: this may be a good candidate to put in fsext.rs
@@ -472,19 +454,16 @@ fn pathbuf_from_stdout() -> UResult<PathBuf> {
     #[cfg(windows)]
     {
         use std::os::windows::prelude::AsRawHandle;
-        use winapi::shared::minwindef::{DWORD, MAX_PATH};
-        use winapi::shared::winerror::{
-            ERROR_INVALID_PARAMETER, ERROR_NOT_ENOUGH_MEMORY, ERROR_PATH_NOT_FOUND,
+        use windows_sys::Win32::Foundation::{
+            GetLastError, ERROR_INVALID_PARAMETER, ERROR_NOT_ENOUGH_MEMORY, ERROR_PATH_NOT_FOUND,
+            HANDLE, MAX_PATH,
         };
-        use winapi::um::errhandlingapi::GetLastError;
-        use winapi::um::fileapi::GetFinalPathNameByHandleW;
-        use winapi::um::winnt::WCHAR;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFinalPathNameByHandleW, FILE_NAME_OPENED,
+        };
 
-        let handle = std::io::stdout().lock().as_raw_handle();
-        let mut file_path_buffer: [WCHAR; MAX_PATH as usize] = [0; MAX_PATH as usize];
-
-        // Couldn't find this in winapi
-        const FILE_NAME_OPENED: DWORD = 0x8;
+        let handle = std::io::stdout().lock().as_raw_handle() as HANDLE;
+        let mut file_path_buffer: [u16; MAX_PATH as usize] = [0; MAX_PATH as usize];
 
         // https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlea#examples
         // SAFETY: We transmute the handle to be able to cast *mut c_void into a
@@ -507,10 +486,10 @@ fn pathbuf_from_stdout() -> UResult<PathBuf> {
             ERROR_PATH_NOT_FOUND | ERROR_NOT_ENOUGH_MEMORY | ERROR_INVALID_PARAMETER => {
                 return Err(USimpleError::new(
                     1,
-                    format!("GetFinalPathNameByHandleW failed with code {}", ret),
+                    format!("GetFinalPathNameByHandleW failed with code {ret}"),
                 ))
             }
-            e if e == 0 => {
+            0 => {
                 return Err(USimpleError::new(
                     1,
                     format!(
@@ -538,8 +517,7 @@ mod tests {
         // We can trigger an error by not setting stdout to anything (will
         // fail with code 1)
         assert!(super::pathbuf_from_stdout()
-            .err()
-            .expect("pathbuf_from_stdout should have failed")
+            .expect_err("pathbuf_from_stdout should have failed")
             .to_string()
             .contains("GetFinalPathNameByHandleW failed with code 1"));
     }

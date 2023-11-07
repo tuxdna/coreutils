@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use std::env;
 use std::io::Write;
 use std::io::{BufWriter, Error, ErrorKind, Result};
@@ -121,7 +125,7 @@ pub fn instantiate_current_writer(
                 .map_err(|_| {
                     Error::new(
                         ErrorKind::Other,
-                        format!("unable to open '{}'; aborting", filename),
+                        format!("unable to open '{filename}'; aborting"),
                     )
                 })?,
         ) as Box<dyn Write>)),

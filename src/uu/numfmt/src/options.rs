@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use std::str::FromStr;
 
 use crate::units::Unit;
@@ -13,6 +17,7 @@ pub const FROM_UNIT: &str = "from-unit";
 pub const FROM_UNIT_DEFAULT: &str = "1";
 pub const HEADER: &str = "header";
 pub const HEADER_DEFAULT: &str = "1";
+pub const INVALID: &str = "invalid";
 pub const NUMBER: &str = "NUMBER";
 pub const PADDING: &str = "padding";
 pub const ROUND: &str = "round";
@@ -29,6 +34,14 @@ pub struct TransformOptions {
     pub to_unit: usize,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum InvalidModes {
+    Abort,
+    Fail,
+    Warn,
+    Ignore,
+}
+
 pub struct NumfmtOptions {
     pub transform: TransformOptions,
     pub padding: isize,
@@ -38,6 +51,7 @@ pub struct NumfmtOptions {
     pub round: RoundMethod,
     pub suffix: Option<String>,
     pub format: FormatOptions,
+    pub invalid: InvalidModes,
 }
 
 #[derive(Clone, Copy)]
@@ -74,7 +88,7 @@ impl RoundMethod {
 }
 
 // Represents the options extracted from the --format argument provided by the user.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct FormatOptions {
     pub grouping: bool,
     pub padding: Option<isize>,
@@ -82,19 +96,6 @@ pub struct FormatOptions {
     pub prefix: String,
     pub suffix: String,
     pub zero_padding: bool,
-}
-
-impl Default for FormatOptions {
-    fn default() -> Self {
-        Self {
-            grouping: false,
-            padding: None,
-            precision: None,
-            prefix: String::from(""),
-            suffix: String::from(""),
-            zero_padding: false,
-        }
-    }
 }
 
 impl FromStr for FormatOptions {
@@ -108,12 +109,13 @@ impl FromStr for FormatOptions {
     // An optional zero (%010f) will zero pad the number.
     // An optional negative value (%-10f) will left align.
     // An optional precision (%.1f) determines the precision of the number.
+    #[allow(clippy::cognitive_complexity)]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut iter = s.chars().peekable();
         let mut options = Self::default();
 
-        let mut padding = String::from("");
-        let mut precision = String::from("");
+        let mut padding = String::new();
+        let mut precision = String::new();
         let mut double_percentage_counter = 0;
 
         // '%' chars in the prefix, if any, must appear in blocks of even length, for example: "%%%%" and
@@ -141,14 +143,14 @@ impl FromStr for FormatOptions {
 
         if iter.peek().is_none() {
             return if options.prefix == s {
-                Err(format!("format '{}' has no % directive", s))
+                Err(format!("format '{s}' has no % directive"))
             } else {
-                Err(format!("format '{}' ends in %", s))
+                Err(format!("format '{s}' ends in %"))
             };
         }
 
         // GNU numfmt allows to mix the characters " ", "'", and "0" in any way, so we do the same
-        while matches!(iter.peek(), Some(' ') | Some('\'') | Some('0')) {
+        while matches!(iter.peek(), Some(' ' | '\'' | '0')) {
             match iter.next().unwrap() {
                 ' ' => (),
                 '\'' => options.grouping = true,
@@ -164,8 +166,7 @@ impl FromStr for FormatOptions {
                 Some(c) if c.is_ascii_digit() => padding.push('-'),
                 _ => {
                     return Err(format!(
-                        "invalid format '{}', directive must be %[0]['][-][N][.][N]f",
-                        s
+                        "invalid format '{s}', directive must be %[0]['][-][N][.][N]f"
                     ))
                 }
             }
@@ -184,15 +185,15 @@ impl FromStr for FormatOptions {
             if let Ok(p) = padding.parse() {
                 options.padding = Some(p);
             } else {
-                return Err(format!("invalid format '{}' (width overflow)", s));
+                return Err(format!("invalid format '{s}' (width overflow)"));
             }
         }
 
         if let Some('.') = iter.peek() {
             iter.next();
 
-            if matches!(iter.peek(), Some(' ') | Some('+') | Some('-')) {
-                return Err(format!("invalid precision in format '{}'", s));
+            if matches!(iter.peek(), Some(' ' | '+' | '-')) {
+                return Err(format!("invalid precision in format '{s}'"));
             }
 
             while let Some(c) = iter.peek() {
@@ -204,14 +205,12 @@ impl FromStr for FormatOptions {
                 }
             }
 
-            if !precision.is_empty() {
-                if let Ok(p) = precision.parse() {
-                    options.precision = Some(p);
-                } else {
-                    return Err(format!("invalid precision in format '{}'", s));
-                }
-            } else {
+            if precision.is_empty() {
                 options.precision = Some(0);
+            } else if let Ok(p) = precision.parse() {
+                options.precision = Some(p);
+            } else {
+                return Err(format!("invalid precision in format '{s}'"));
             }
         }
 
@@ -219,8 +218,7 @@ impl FromStr for FormatOptions {
             iter.next();
         } else {
             return Err(format!(
-                "invalid format '{}', directive must be %[0]['][-][N][.][N]f",
-                s
+                "invalid format '{s}', directive must be %[0]['][-][N][.][N]f"
             ));
         }
 
@@ -235,11 +233,25 @@ impl FromStr for FormatOptions {
                 }
                 iter.next();
             } else {
-                return Err(format!("format '{}' has too many % directives", s));
+                return Err(format!("format '{s}' has too many % directives"));
             }
         }
 
         Ok(options)
+    }
+}
+
+impl FromStr for InvalidModes {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "abort" => Ok(Self::Abort),
+            "fail" => Ok(Self::Fail),
+            "warn" => Ok(Self::Warn),
+            "ignore" => Ok(Self::Ignore),
+            unknown => Err(format!("Unknown invalid mode: {unknown}")),
+        }
     }
 }
 
@@ -254,6 +266,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_parse_format_with_invalid_formats() {
         assert!("".parse::<FormatOptions>().is_err());
         assert!("hello".parse::<FormatOptions>().is_err());
@@ -351,5 +364,22 @@ mod tests {
         assert_eq!(expected_options, "%'0f".parse().unwrap());
         assert_eq!(expected_options, "%0'0'0'f".parse().unwrap());
         assert_eq!(expected_options, "%'0'0'0f".parse().unwrap());
+    }
+
+    #[test]
+    fn test_set_invalid_mode() {
+        assert_eq!(Ok(InvalidModes::Abort), InvalidModes::from_str("abort"));
+        assert_eq!(Ok(InvalidModes::Abort), InvalidModes::from_str("ABORT"));
+
+        assert_eq!(Ok(InvalidModes::Fail), InvalidModes::from_str("fail"));
+        assert_eq!(Ok(InvalidModes::Fail), InvalidModes::from_str("FAIL"));
+
+        assert_eq!(Ok(InvalidModes::Ignore), InvalidModes::from_str("ignore"));
+        assert_eq!(Ok(InvalidModes::Ignore), InvalidModes::from_str("IGNORE"));
+
+        assert_eq!(Ok(InvalidModes::Warn), InvalidModes::from_str("warn"));
+        assert_eq!(Ok(InvalidModes::Warn), InvalidModes::from_str("WARN"));
+
+        assert!(InvalidModes::from_str("something unknown").is_err());
     }
 }

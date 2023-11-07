@@ -1,7 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -20,10 +18,10 @@ use std::os::unix::fs::MetadataExt;
 
 use clap::{crate_version, Arg, ArgAction, Command};
 use std::path::PathBuf;
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
-static ABOUT: &str = "lightweight finger";
-const USAGE: &str = "{} [OPTION]... [USER]...";
+const ABOUT: &str = help_about!("pinky.md");
+const USAGE: &str = help_usage!("pinky.md");
 
 mod options {
     pub const LONG_FORMAT: &str = "long_format";
@@ -218,10 +216,10 @@ impl Capitalize for str {
     fn capitalize(&self) -> String {
         self.char_indices()
             .fold(String::with_capacity(self.len()), |mut acc, x| {
-                if x.0 != 0 {
-                    acc.push(x.1);
-                } else {
+                if x.0 == 0 {
                     acc.push(x.1.to_ascii_uppercase());
+                } else {
+                    acc.push(x.1);
                 }
                 acc
             })
@@ -241,11 +239,11 @@ fn idle_string(when: i64) -> String {
             // less than 1day
             let hours = duration / (60 * 60);
             let minutes = (duration % (60 * 60)) / 60;
-            format!("{:02}:{:02}", hours, minutes)
+            format!("{hours:02}:{minutes:02}")
         } else {
             // more than 1day
             let days = duration / (24 * 3600);
-            format!("{}d", days)
+            format!("{days}d")
         }
     })
 }
@@ -277,12 +275,14 @@ impl Pinky {
 
         let mesg;
         let last_change;
+
         match pts_path.metadata() {
+            #[allow(clippy::unnecessary_cast)]
             Ok(meta) => {
-                mesg = if meta.mode() & (S_IWGRP as u32) != 0 {
-                    ' '
-                } else {
+                mesg = if meta.mode() & S_IWGRP as u32 == 0 {
                     '*'
+                } else {
+                    ' '
                 };
                 last_change = meta.atime();
             }
@@ -301,7 +301,7 @@ impl Pinky {
                 None
             };
             if let Some(fullname) = fullname {
-                print!(" {:<19.19}", fullname);
+                print!(" {fullname:<19.19}");
             } else {
                 print!(" {:19}", "        ???");
             }
@@ -310,10 +310,10 @@ impl Pinky {
         print!(" {}{:<8.*}", mesg, utmpx::UT_LINESIZE, ut.tty_device());
 
         if self.include_idle {
-            if last_change != 0 {
-                print!(" {:<6}", idle_string(last_change));
-            } else {
+            if last_change == 0 {
                 print!(" {:<6}", "?????");
+            } else {
+                print!(" {:<6}", idle_string(last_change));
             }
         }
 
@@ -322,7 +322,7 @@ impl Pinky {
         let mut s = ut.host();
         if self.include_where && !s.is_empty() {
             s = ut.canon_host()?;
-            print!(" {}", s);
+            print!(" {s}");
         }
 
         println!();
@@ -361,15 +361,15 @@ impl Pinky {
 
     fn long_pinky(&self) {
         for u in &self.names {
-            print!("Login name: {:<28}In real life: ", u);
+            print!("Login name: {u:<28}In real life: ");
             if let Ok(pw) = Passwd::locate(u.as_str()) {
                 let fullname = gecos_to_fullname(&pw).unwrap_or_default();
                 let user_dir = pw.user_dir.unwrap_or_default();
                 let user_shell = pw.user_shell.unwrap_or_default();
-                println!(" {}", fullname);
+                println!(" {fullname}");
                 if self.include_home_and_shell {
-                    print!("Directory: {:<29}", user_dir);
-                    println!("Shell:  {}", user_shell);
+                    print!("Directory: {user_dir:<29}");
+                    println!("Shell:  {user_shell}");
                 }
                 if self.include_project {
                     let mut p = PathBuf::from(&user_dir);

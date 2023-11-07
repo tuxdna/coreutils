@@ -1,14 +1,9 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) 2014 Vsevolod Velichko <torkvemada@sorokdva.net>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) retcode
-
-#[macro_use]
-extern crate uucore;
 
 use clap::{
     builder::NonEmptyStringValueParser, crate_version, Arg, ArgAction, ArgMatches, Command,
@@ -17,17 +12,19 @@ use std::{
     io::{stdout, Write},
     path::{Path, PathBuf},
 };
-use uucore::error::UClapError;
 use uucore::fs::make_path_relative_to;
 use uucore::{
     display::{print_verbatim, Quotable},
     error::{FromIo, UResult},
     format_usage,
     fs::{canonicalize, MissingHandling, ResolveMode},
+    help_about, help_usage,
+    line_ending::LineEnding,
 };
+use uucore::{error::UClapError, show, show_if_err};
 
-static ABOUT: &str = "print the resolved path";
-const USAGE: &str = "{} [OPTION]... FILE...";
+static ABOUT: &str = help_about!("realpath.md");
+const USAGE: &str = help_usage!("realpath.md");
 
 static OPT_QUIET: &str = "quiet";
 static OPT_STRIP: &str = "strip";
@@ -54,7 +51,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         .collect();
 
     let strip = matches.get_flag(OPT_STRIP);
-    let zero = matches.get_flag(OPT_ZERO);
+    let line_ending = LineEnding::from_zero_flag(matches.get_flag(OPT_ZERO));
     let quiet = matches.get_flag(OPT_QUIET);
     let logical = matches.get_flag(OPT_LOGICAL);
     let can_mode = if matches.get_flag(OPT_CANONICALIZE_EXISTING) {
@@ -75,7 +72,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     for path in &paths {
         let result = resolve_path(
             path,
-            zero,
+            line_ending,
             resolve_mode,
             can_mode,
             relative_to.as_deref(),
@@ -130,7 +127,7 @@ pub fn uu_app() -> Command {
             Arg::new(OPT_PHYSICAL)
                 .short('P')
                 .long(OPT_PHYSICAL)
-                .overrides_with_all(&[OPT_STRIP, OPT_LOGICAL])
+                .overrides_with_all([OPT_STRIP, OPT_LOGICAL])
                 .help("resolve symlinks as encountered (default)")
                 .action(ArgAction::SetTrue),
         )
@@ -251,19 +248,18 @@ fn canonicalize_relative(
 /// symbolic links.
 fn resolve_path(
     p: &Path,
-    zero: bool,
+    line_ending: LineEnding,
     resolve: ResolveMode,
     can_mode: MissingHandling,
     relative_to: Option<&Path>,
     relative_base: Option<&Path>,
 ) -> std::io::Result<()> {
     let abs = canonicalize(p, can_mode, resolve)?;
-    let line_ending = if zero { b'\0' } else { b'\n' };
 
     let abs = process_relative(abs, relative_base, relative_to);
 
-    print_verbatim(&abs)?;
-    stdout().write_all(&[line_ending])?;
+    print_verbatim(abs)?;
+    stdout().write_all(&[line_ending.into()])?;
     Ok(())
 }
 

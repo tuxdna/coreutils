@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 //! UnescapedText is a tokenizer impl
 //! for tokenizing character literals,
 //! and escaped character literals (of allowed escapes),
@@ -7,13 +11,9 @@
 
 use itertools::PutBackN;
 use std::char::from_u32;
-use std::io::{stdout, Write};
-use std::iter::Peekable;
+use std::io::Write;
 use std::process::exit;
-use std::slice::Iter;
 use std::str::Chars;
-
-use crate::error::UResult;
 
 use super::token;
 
@@ -22,19 +22,19 @@ const EXIT_ERR: i32 = 1;
 
 // by default stdout only flushes
 // to console when a newline is passed.
-fn flush_char(c: char) {
-    print!("{}", c);
-    let _ = stdout().flush();
+macro_rules! write_and_flush {
+    ($writer:expr, $($args:tt)+) => ({
+        write!($writer, "{}", $($args)+).ok();
+        $writer.flush().ok();
+    })
 }
 
-fn flush_str(s: &str) {
-    print!("{}", s);
-    let _ = stdout().flush();
-}
-
-fn flush_bytes(bslice: &[u8]) {
-    let _ = stdout().write(bslice);
-    let _ = stdout().flush();
+fn flush_bytes<W>(writer: &mut W, bslice: &[u8])
+where
+    W: Write,
+{
+    writer.write_all(bslice).ok();
+    writer.flush().ok();
 }
 
 #[derive(Default)]
@@ -92,12 +92,9 @@ impl UnescapedText {
         } else {
             4
         };
-        let err_msg = format!(
-            "invalid universal character name {0}{1:02$x}",
-            preface, val, leading_zeros
-        );
+        let err_msg = format!("invalid universal character name {preface}{val:0leading_zeros$x}");
         if (val < 159 && (val != 36 && val != 64 && val != 96)) || (val > 55296 && val < 57343) {
-            println!("{}", err_msg); //todo stderr
+            println!("{err_msg}"); //todo stderr
             exit(EXIT_ERR);
         }
     }
@@ -106,7 +103,14 @@ impl UnescapedText {
     // adding the unescaped bytes
     // to the passed byte_vec
     // in subs_mode change octal behavior
-    fn handle_escaped(byte_vec: &mut Vec<u8>, it: &mut PutBackN<Chars>, subs_mode: bool) {
+    fn handle_escaped<W>(
+        writer: &mut W,
+        byte_vec: &mut Vec<u8>,
+        it: &mut PutBackN<Chars>,
+        subs_mode: bool,
+    ) where
+        W: Write,
+    {
         let ch = it.next().unwrap_or('\\');
         match ch {
             '0'..='9' | 'x' => {
@@ -135,13 +139,13 @@ impl UnescapedText {
                     }
                     _ => {}
                 }
-                if !ignore {
+                if ignore {
+                    byte_vec.push(ch as u8);
+                } else {
                     let val = (Self::base_to_u32(min_len, max_len, base, it) % 256) as u8;
                     byte_vec.push(val);
                     let bvec = [val];
-                    flush_bytes(&bvec);
-                } else {
-                    byte_vec.push(ch as u8);
+                    flush_bytes(writer, &bvec);
                 }
             }
             e => {
@@ -187,7 +191,7 @@ impl UnescapedText {
                     }
                 };
                 s.push(ch);
-                flush_str(&s);
+                write_and_flush!(writer, &s);
                 byte_vec.extend(s.bytes());
             }
         };
@@ -197,10 +201,15 @@ impl UnescapedText {
     // and return a wrapper around a Vec<u8> of unescaped bytes
     // break on encounter of sub symbol ('%[^%]') unless called
     // through %b subst.
-    pub fn from_it_core(
+    #[allow(clippy::cognitive_complexity)]
+    pub fn from_it_core<W>(
+        writer: &mut W,
         it: &mut PutBackN<Chars>,
         subs_mode: bool,
-    ) -> Option<Box<dyn token::Token>> {
+    ) -> Option<token::Token>
+    where
+        W: Write,
+    {
         let mut addchar = false;
         let mut new_text = Self::new();
         let mut tmp_str = String::new();
@@ -210,12 +219,12 @@ impl UnescapedText {
                 if !addchar {
                     addchar = true;
                 }
-                match ch as char {
+                match ch {
                     x if x != '\\' && x != '%' => {
                         // lazy branch eval
                         // remember this fn could be called
                         // many times in a single exec through %b
-                        flush_char(ch);
+                        write_and_flush!(writer, ch);
                         tmp_str.push(ch);
                     }
                     '\\' => {
@@ -230,12 +239,12 @@ impl UnescapedText {
                             new_vec.extend(tmp_str.bytes());
                             tmp_str = String::new();
                         }
-                        Self::handle_escaped(new_vec, it, subs_mode);
+                        Self::handle_escaped(writer, new_vec, it, subs_mode);
                     }
                     x if x == '%' && !subs_mode => {
                         if let Some(follow) = it.next() {
                             if follow == '%' {
-                                flush_char(ch);
+                                write_and_flush!(writer, ch);
                                 tmp_str.push(ch);
                             } else {
                                 it.put_back(follow);
@@ -248,7 +257,7 @@ impl UnescapedText {
                         }
                     }
                     _ => {
-                        flush_char(ch);
+                        write_and_flush!(writer, ch);
                         tmp_str.push(ch);
                     }
                 }
@@ -258,22 +267,17 @@ impl UnescapedText {
             }
         }
         if addchar {
-            Some(Box::new(new_text))
+            Some(token::Token::UnescapedText(new_text))
         } else {
             None
         }
     }
 }
-impl token::Tokenizer for UnescapedText {
-    fn from_it(
-        it: &mut PutBackN<Chars>,
-        _: &mut Peekable<Iter<String>>,
-    ) -> UResult<Option<Box<dyn token::Token>>> {
-        Ok(Self::from_it_core(it, false))
-    }
-}
-impl token::Token for UnescapedText {
-    fn print(&self, _: &mut Peekable<Iter<String>>) {
-        flush_bytes(&self.0[..]);
+impl UnescapedText {
+    pub(crate) fn write<W>(&self, writer: &mut W)
+    where
+        W: Write,
+    {
+        flush_bytes(writer, &self.0[..]);
     }
 }

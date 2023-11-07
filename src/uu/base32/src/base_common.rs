@@ -1,11 +1,7 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jordy Dickinson <jordy.dickinson@gmail.com>
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-// (c) Alex Lyon <arcterus@mail.com>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 use std::io::{stdout, Read, Write};
 
@@ -58,7 +54,7 @@ impl Config {
                             format!("{}: No such file or directory", name.maybe_quote()),
                         ));
                     }
-                    Some(name.to_owned())
+                    Some(name.clone())
                 }
             }
             None => None,
@@ -160,18 +156,7 @@ pub fn handle_input<R: Read>(
         data = data.line_wrap(wrap);
     }
 
-    if !decode {
-        match data.encode() {
-            Ok(s) => {
-                wrap_print(&data, &s);
-                Ok(())
-            }
-            Err(_) => Err(USimpleError::new(
-                1,
-                "error: invalid input (length must be multiple of 4 characters)",
-            )),
-        }
-    } else {
+    if decode {
         match data.decode() {
             Ok(s) => {
                 // Silent the warning as we want to the error message
@@ -183,6 +168,17 @@ pub fn handle_input<R: Read>(
                 Ok(())
             }
             Err(_) => Err(USimpleError::new(1, "error: invalid input")),
+        }
+    } else {
+        match data.encode() {
+            Ok(s) => {
+                wrap_print(&data, &s);
+                Ok(())
+            }
+            Err(_) => Err(USimpleError::new(
+                1,
+                "error: invalid input (length must be multiple of 4 characters)",
+            )),
         }
     }
 }

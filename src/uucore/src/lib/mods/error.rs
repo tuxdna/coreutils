@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // TODO fix broken links
 #![allow(rustdoc::broken_intra_doc_links)]
 //! All utils return exit with an exit code. Usually, the following scheme is used:
@@ -396,7 +400,7 @@ impl Display for UIoError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         use std::io::ErrorKind::*;
 
-        let mut message;
+        let message;
         let message = if self.inner.raw_os_error().is_some() {
             // These are errors that come directly from the OS.
             // We want to normalize their messages across systems,
@@ -424,7 +428,6 @@ impl Display for UIoError {
                     // (https://github.com/rust-lang/rust/issues/86442)
                     // are stabilized, we should add them to the match statement.
                     message = strip_errno(&self.inner);
-                    capitalize(&mut message);
                     &message
                 }
             }
@@ -435,21 +438,13 @@ impl Display for UIoError {
             // a file that was not found.
             // There are also errors with entirely custom messages.
             message = self.inner.to_string();
-            capitalize(&mut message);
             &message
         };
         if let Some(ctx) = &self.context {
-            write!(f, "{}: {}", ctx, message)
+            write!(f, "{ctx}: {message}")
         } else {
-            write!(f, "{}", message)
+            write!(f, "{message}")
         }
-    }
-}
-
-/// Capitalize the first character of an ASCII string.
-fn capitalize(text: &mut str) {
-    if let Some(first) = text.get_mut(..1) {
-        first.make_ascii_uppercase();
     }
 }
 
@@ -503,6 +498,60 @@ impl From<std::io::Error> for UIoError {
 
 impl From<std::io::Error> for Box<dyn UError> {
     fn from(f: std::io::Error) -> Self {
+        let u_error: UIoError = f.into();
+        Box::new(u_error) as Self
+    }
+}
+
+/// Enables the conversion from [`Result<T, nix::Error>`] to [`UResult<T>`].
+///
+/// # Examples
+///
+/// ```
+/// use uucore::error::FromIo;
+/// use nix::errno::Errno;
+///
+/// let nix_err = Err::<(), nix::Error>(Errno::EACCES);
+/// let uio_result = nix_err.map_err_context(|| String::from("fix me please!"));
+///
+/// // prints "fix me please!: Permission denied"
+/// println!("{}", uio_result.unwrap_err());
+/// ```
+#[cfg(unix)]
+impl<T> FromIo<UResult<T>> for Result<T, nix::Error> {
+    fn map_err_context(self, context: impl FnOnce() -> String) -> UResult<T> {
+        self.map_err(|e| {
+            Box::new(UIoError {
+                context: Some((context)()),
+                inner: std::io::Error::from_raw_os_error(e as i32),
+            }) as Box<dyn UError>
+        })
+    }
+}
+
+#[cfg(unix)]
+impl<T> FromIo<UResult<T>> for nix::Error {
+    fn map_err_context(self, context: impl FnOnce() -> String) -> UResult<T> {
+        Err(Box::new(UIoError {
+            context: Some((context)()),
+            inner: std::io::Error::from_raw_os_error(self as i32),
+        }) as Box<dyn UError>)
+    }
+}
+
+#[cfg(unix)]
+impl From<nix::Error> for UIoError {
+    fn from(f: nix::Error) -> Self {
+        Self {
+            context: None,
+            inner: std::io::Error::from_raw_os_error(f as i32),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl From<nix::Error> for Box<dyn UError> {
+    fn from(f: nix::Error) -> Self {
         let u_error: UIoError = f.into();
         Box::new(u_error) as Self
     }
@@ -691,5 +740,32 @@ impl Display for ClapErrorWrapper {
     fn fmt(&self, _f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         self.error.print().unwrap();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(unix)]
+    fn test_nix_error_conversion() {
+        use super::{FromIo, UIoError};
+        use nix::errno::Errno;
+        use std::io::ErrorKind;
+
+        for (nix_error, expected_error_kind) in [
+            (Errno::EACCES, ErrorKind::PermissionDenied),
+            (Errno::ENOENT, ErrorKind::NotFound),
+            (Errno::EEXIST, ErrorKind::AlreadyExists),
+        ] {
+            let error = UIoError::from(nix_error);
+            assert_eq!(expected_error_kind, error.inner.kind());
+        }
+        assert_eq!(
+            "test: Permission denied",
+            Err::<(), nix::Error>(Errno::EACCES)
+                .map_err_context(|| String::from("test"))
+                .unwrap_err()
+                .to_string()
+        );
     }
 }

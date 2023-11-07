@@ -1,19 +1,17 @@
-//* This file is part of the uutils coreutils package.
-//*
-//* (c) Roman Gafiyatullin <r.gafiyatullin@me.com>
-//*
-//* For the full copyright and license information, please view the LICENSE
-//* file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 //!
 //! Here we employ shunting-yard algorithm for building AST from tokens according to operators' precedence and associative-ness.
 //! * `<https://en.wikipedia.org/wiki/Shunting-yard_algorithm>`
 //!
 
-// spell-checker:ignore (ToDO) binop binops ints paren prec multibytes
+// spell-checker:ignore (ToDO) ints paren prec multibytes
 
 use num_bigint::BigInt;
-use num_traits::{One, Zero};
+use num_traits::Zero;
 use onig::{Regex, RegexOptions, Syntax};
 
 use crate::tokens::Token;
@@ -33,10 +31,12 @@ pub enum AstNode {
         operands: OperandsList,
     },
 }
+
 impl AstNode {
     fn debug_dump(&self) {
         self.debug_dump_impl(1);
     }
+
     fn debug_dump_impl(&self, depth: usize) {
         for _ in 0..depth {
             print!("\t",);
@@ -54,7 +54,7 @@ impl AstNode {
                 operands,
             } => {
                 println!(
-                    "Node( {} ) at #{} (evaluate -> {:?})",
+                    "Node( {} ) at #{} ( evaluate -> {:?} )",
                     op_type,
                     token_idx,
                     self.evaluate()
@@ -73,12 +73,14 @@ impl AstNode {
             operands,
         })
     }
+
     fn new_leaf(token_idx: usize, value: &str) -> Box<Self> {
         Box::new(Self::Leaf {
             token_idx,
             value: value.into(),
         })
     }
+
     pub fn evaluate(&self) -> Result<String, String> {
         match self {
             Self::Leaf { value, .. } => Ok(value.clone()),
@@ -151,14 +153,42 @@ impl AstNode {
                     "index" => Ok(prefix_operator_index(&operand_values)),
                     "substr" => Ok(prefix_operator_substr(&operand_values)),
 
-                    _ => Err(format!("operation not implemented: {}", op_type)),
+                    _ => Err(format!("operation not implemented: {op_type}")),
                 },
             },
         }
     }
+
     pub fn operand_values(&self) -> Result<Vec<String>, String> {
-        if let Self::Node { operands, .. } = self {
+        if let Self::Node {
+            operands, op_type, ..
+        } = self
+        {
             let mut out = Vec::with_capacity(operands.len());
+            let mut operands = operands.iter();
+
+            if let Some(value) = operands.next() {
+                let value = value.evaluate()?;
+                out.push(value.clone());
+                // short-circuit evaluation for `|` and `&`
+                // push dummy to pass `assert!(values.len() == 2);`
+                match op_type.as_ref() {
+                    "|" => {
+                        if value_as_bool(&value) {
+                            out.push(String::from("dummy"));
+                            return Ok(out);
+                        }
+                    }
+                    "&" => {
+                        if !value_as_bool(&value) {
+                            out.push(String::from("dummy"));
+                            return Ok(out);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             for operand in operands {
                 let value = operand.evaluate()?;
                 out.push(value);
@@ -185,14 +215,14 @@ pub fn tokens_to_ast(
 
         maybe_dump_rpn(&out_stack);
         let result = ast_from_rpn(&mut out_stack);
-        if !out_stack.is_empty() {
+        if out_stack.is_empty() {
+            maybe_dump_ast(&result);
+            result
+        } else {
             Err(
                 "syntax error (first RPN token does not represent the root of the expression AST)"
                     .to_owned(),
             )
-        } else {
-            maybe_dump_ast(&result);
-            result
         }
     })
 }
@@ -204,7 +234,7 @@ fn maybe_dump_ast(result: &Result<Box<AstNode>, String>) {
             println!("EXPR_DEBUG_AST");
             match result {
                 Ok(ast) => ast.debug_dump(),
-                Err(reason) => println!("\terr: {:?}", reason),
+                Err(reason) => println!("\terr: {reason:?}"),
             }
         }
     }
@@ -217,7 +247,7 @@ fn maybe_dump_rpn(rpn: &TokenStack) {
         if debug_var == "1" {
             println!("EXPR_DEBUG_RPN");
             for token in rpn {
-                println!("\t{:?}", token);
+                println!("\t{token:?}");
             }
         }
     }
@@ -238,10 +268,11 @@ fn ast_from_rpn(rpn: &mut TokenStack) -> Result<Box<AstNode>, String> {
         }
 
         Some((token_idx, unexpected_token)) => {
-            panic!("unexpected token at #{} {:?}", token_idx, unexpected_token)
+            panic!("unexpected token at #{token_idx} {unexpected_token:?}")
         }
     }
 }
+
 fn maybe_ast_node(
     token_idx: usize,
     op_type: &str,
@@ -266,14 +297,12 @@ fn move_rest_of_ops_to_out(
             None => return Ok(()),
             Some((token_idx, Token::ParOpen)) => {
                 return Err(format!(
-                    "syntax error (Mismatched open-parenthesis at #{})",
-                    token_idx
+                    "syntax error (Mismatched open-parenthesis at #{token_idx})"
                 ))
             }
             Some((token_idx, Token::ParClose)) => {
                 return Err(format!(
-                    "syntax error (Mismatched close-parenthesis at #{})",
-                    token_idx
+                    "syntax error (Mismatched close-parenthesis at #{token_idx})"
                 ))
             }
             Some(other) => out_stack.push(other),
@@ -325,10 +354,10 @@ fn maybe_dump_shunting_yard_step(
     if let Ok(debug_var) = env::var("EXPR_DEBUG_SYA_STEP") {
         if debug_var == "1" {
             println!("EXPR_DEBUG_SYA_STEP");
-            println!("\t{} => {:?}", token_idx, token);
-            println!("\t\tout: {:?}", out_stack);
-            println!("\t\top : {:?}", op_stack);
-            println!("\t\tresult: {:?}", result);
+            println!("\t{token_idx} => {token:?}");
+            println!("\t\tout: {out_stack:?}");
+            println!("\t\top : {op_stack:?}");
+            println!("\t\tresult: {result:?}");
         }
     }
 }
@@ -435,12 +464,15 @@ fn infix_operator_or(values: &[String]) -> String {
     assert!(values.len() == 2);
     if value_as_bool(&values[0]) {
         values[0].clone()
-    } else {
+    } else if value_as_bool(&values[1]) {
         values[1].clone()
+    } else {
+        0.to_string()
     }
 }
 
 fn infix_operator_and(values: &[String]) -> String {
+    assert!(values.len() == 2);
     if value_as_bool(&values[0]) && value_as_bool(&values[1]) {
         values[0].clone()
     } else {
@@ -478,7 +510,7 @@ fn prefix_operator_index(values: &[String]) -> String {
     for (current_idx, ch_h) in haystack.chars().enumerate() {
         for ch_n in needles.chars() {
             if ch_n == ch_h {
-                return current_idx.to_string();
+                return (current_idx + 1).to_string();
             }
         }
     }
@@ -507,6 +539,7 @@ fn prefix_operator_substr(values: &[String]) -> String {
 fn bool_as_int(b: bool) -> u8 {
     u8::from(b)
 }
+
 fn bool_as_string(b: bool) -> String {
     if b {
         "1".to_string()
@@ -514,12 +547,13 @@ fn bool_as_string(b: bool) -> String {
         "0".to_string()
     }
 }
+
 fn value_as_bool(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
     match s.parse::<BigInt>() {
-        Ok(n) => n.is_one(),
+        Ok(n) => n != Zero::zero(),
         Err(_) => true,
     }
 }

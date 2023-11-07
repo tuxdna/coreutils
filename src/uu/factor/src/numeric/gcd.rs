@@ -1,10 +1,7 @@
-// * This file is part of the uutils coreutils package.
-// *
-// * (c) 2015 Wiktor Kuropatwa <wiktor.kuropatwa@gmail.com>
-// * (c) 2020 nicoo            <nicoo@debian.org>
-// *
-// * For the full copyright and license information, please view the LICENSE file
-// * that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (vars) kgcdab gcdac gcdbc
 
@@ -32,8 +29,8 @@ pub fn gcd(mut u: u64, mut v: u64) -> u64 {
 
     loop {
         // Loop invariant: u and v are odd
-        debug_assert!(u % 2 == 1, "u = {} is even", u);
-        debug_assert!(v % 2 == 1, "v = {} is even", v);
+        debug_assert!(u % 2 == 1, "u = {u} is even");
+        debug_assert!(v % 2 == 1, "v = {v} is even");
 
         // gcd(u, v) = gcd(|u - v|, min(u, v))
         if u > v {

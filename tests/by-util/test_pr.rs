@@ -1,7 +1,10 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (ToDO) Sdivide
-extern crate time;
 
-use crate::common::util::*;
+use crate::common::util::{TestScenario, UCommand};
 use std::fs::metadata;
 use time::macros::format_description;
 use time::Duration;
@@ -18,11 +21,7 @@ fn file_last_modified_time(ucmd: &UCommand, path: &str) -> String {
             i.modified()
                 .map(|x| {
                     let date_time: OffsetDateTime = x.into();
-                    let offset = OffsetDateTime::now_local().unwrap().offset();
-                    date_time
-                        .to_offset(offset)
-                        .format(&DATE_TIME_FORMAT)
-                        .unwrap()
+                    date_time.format(&DATE_TIME_FORMAT).unwrap()
                 })
                 .unwrap_or_default()
         })
@@ -42,7 +41,7 @@ fn all_minutes(from: OffsetDateTime, to: OffsetDateTime) -> Vec<String> {
 }
 
 fn valid_last_modified_template_vars(from: OffsetDateTime) -> Vec<Vec<(String, String)>> {
-    all_minutes(from, OffsetDateTime::now_local().unwrap())
+    all_minutes(from, OffsetDateTime::now_utc())
         .into_iter()
         .map(|time| vec![("{last_modified_time}".to_string(), time)])
         .collect()
@@ -163,7 +162,7 @@ fn test_with_valid_page_ranges() {
     scenario
         .args(&["--pages=20:5", test_file_path])
         .fails()
-        .stderr_is("pr: invalid --pages argument '20:5'")
+        .stderr_is("pr: invalid --pages argument '20:5'\n")
         .stdout_is("");
     new_ucmd!()
         .args(&["--pages=1:5", test_file_path])
@@ -172,17 +171,17 @@ fn test_with_valid_page_ranges() {
     new_ucmd!()
         .args(&["--pages=-1:5", test_file_path])
         .fails()
-        .stderr_is("pr: invalid --pages argument '-1:5'")
+        .stderr_is("pr: invalid --pages argument '-1:5'\n")
         .stdout_is("");
     new_ucmd!()
         .args(&["--pages=1:-5", test_file_path])
         .fails()
-        .stderr_is("pr: invalid --pages argument '1:-5'")
+        .stderr_is("pr: invalid --pages argument '1:-5'\n")
         .stdout_is("");
     new_ucmd!()
         .args(&["--pages=5:1", test_file_path])
         .fails()
-        .stderr_is("pr: invalid --pages argument '5:1'")
+        .stderr_is("pr: invalid --pages argument '5:1'\n")
         .stdout_is("");
 }
 
@@ -258,7 +257,7 @@ fn test_with_suppress_error_option() {
 fn test_with_stdin() {
     let expected_file_path = "stdin.log.expected";
     let mut scenario = new_ucmd!();
-    let start = OffsetDateTime::now_local().unwrap();
+    let start = OffsetDateTime::now_utc();
     scenario
         .pipe_in_fixture("stdin.log")
         .args(&["--pages=1:2", "-n", "-"])
@@ -321,7 +320,7 @@ fn test_with_mpr() {
     let expected_test_file_path = "mpr.log.expected";
     let expected_test_file_path1 = "mpr1.log.expected";
     let expected_test_file_path2 = "mpr2.log.expected";
-    let start = OffsetDateTime::now_local().unwrap();
+    let start = OffsetDateTime::now_utc();
     new_ucmd!()
         .args(&["--pages=1:2", "-m", "-n", test_file_path, test_file_path1])
         .succeeds()
@@ -330,7 +329,7 @@ fn test_with_mpr() {
             &valid_last_modified_template_vars(start),
         );
 
-    let start = OffsetDateTime::now_local().unwrap();
+    let start = OffsetDateTime::now_utc();
     new_ucmd!()
         .args(&["--pages=2:4", "-m", "-n", test_file_path, test_file_path1])
         .succeeds()
@@ -339,7 +338,7 @@ fn test_with_mpr() {
             &valid_last_modified_template_vars(start),
         );
 
-    let start = OffsetDateTime::now_local().unwrap();
+    let start = OffsetDateTime::now_utc();
     new_ucmd!()
         .args(&[
             "--pages=1:2",
@@ -364,13 +363,13 @@ fn test_with_mpr_and_column_options() {
     new_ucmd!()
         .args(&["--column=2", "-m", "-n", test_file_path])
         .fails()
-        .stderr_is("pr: cannot specify number of columns when printing in parallel")
+        .stderr_is("pr: cannot specify number of columns when printing in parallel\n")
         .stdout_is("");
 
     new_ucmd!()
         .args(&["-a", "-m", "-n", test_file_path])
         .fails()
-        .stderr_is("pr: cannot specify both printing across and printing in parallel")
+        .stderr_is("pr: cannot specify both printing across and printing in parallel\n")
         .stdout_is("");
 }
 
@@ -417,7 +416,6 @@ fn test_with_pr_core_utils_tests() {
         let value = file_last_modified_time(&scenario, test_file_path);
         let mut arguments: Vec<&str> = flags
             .split(' ')
-            .into_iter()
             .filter(|i| i.trim() != "")
             .collect::<Vec<&str>>();
 
@@ -447,7 +445,7 @@ fn test_with_join_lines_option() {
     let test_file_2 = "test.log";
     let expected_file_path = "joined.log.expected";
     let mut scenario = new_ucmd!();
-    let start = OffsetDateTime::now_local().unwrap();
+    let start = OffsetDateTime::now_utc();
     scenario
         .args(&["+1:2", "-J", "-m", test_file_1, test_file_2])
         .run()

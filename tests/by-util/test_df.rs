@@ -1,7 +1,11 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore udev pcent iuse itotal iused ipcent
 use std::collections::HashSet;
 
-use crate::common::util::*;
+use crate::common::util::TestScenario;
 
 #[test]
 fn test_invalid_arg() {
@@ -258,7 +262,7 @@ fn test_type_option() {
 }
 
 #[test]
-#[cfg(not(target_os = "freebsd"))] // FIXME: fix this test for FreeBSD
+#[cfg(not(any(target_os = "freebsd", target_os = "windows")))] // FIXME: fix test for FreeBSD & Win
 fn test_type_option_with_file() {
     let fs_type = new_ucmd!()
         .args(&["--output=fstype", "."])
@@ -321,13 +325,13 @@ fn test_include_exclude_same_type() {
     new_ucmd!()
         .args(&["-t", "ext4", "-x", "ext4"])
         .fails()
-        .stderr_is("df: file system type 'ext4' both selected and excluded");
+        .stderr_is("df: file system type 'ext4' both selected and excluded\n");
     new_ucmd!()
         .args(&["-t", "ext4", "-x", "ext4", "-t", "ext3", "-x", "ext3"])
         .fails()
         .stderr_is(
             "df: file system type 'ext4' both selected and excluded\n\
-             df: file system type 'ext3' both selected and excluded",
+             df: file system type 'ext3' both selected and excluded\n",
         );
 }
 
@@ -519,7 +523,7 @@ fn test_default_block_size_in_posix_portability_mode() {
 fn test_block_size_1024() {
     fn get_header(block_size: u64) -> String {
         let output = new_ucmd!()
-            .args(&["-B", &format!("{}", block_size), "--output=size"])
+            .args(&["-B", &format!("{block_size}"), "--output=size"])
             .succeeds()
             .stdout_move_str();
         output.lines().next().unwrap().trim().to_string()
@@ -693,9 +697,9 @@ fn test_ignore_block_size_from_env_in_posix_portability_mode() {
 fn test_too_large_block_size() {
     fn run_command(size: &str) {
         new_ucmd!()
-            .arg(format!("--block-size={}", size))
+            .arg(format!("--block-size={size}"))
             .fails()
-            .stderr_contains(format!("--block-size argument '{}' too large", size));
+            .stderr_contains(format!("--block-size argument '{size}' too large"));
     }
 
     let too_large_sizes = vec!["1Y", "1Z"];
@@ -806,7 +810,7 @@ fn test_output_file_all_filesystems() {
 }
 
 #[test]
-#[cfg(not(target_os = "freebsd"))] // FIXME: fix this test for FreeBSD
+#[cfg(not(any(target_os = "freebsd", target_os = "windows")))] // FIXME: fix test for FreeBSD & Win
 fn test_output_file_specific_files() {
     // Create three files.
     let (at, mut ucmd) = at_and_ucmd!();
@@ -825,7 +829,7 @@ fn test_output_file_specific_files() {
 }
 
 #[test]
-#[cfg(not(target_os = "freebsd"))] // FIXME: fix this test for FreeBSD
+#[cfg(not(any(target_os = "freebsd", target_os = "windows")))] // FIXME: fix test for FreeBSD & Win
 fn test_file_column_width_if_filename_contains_unicode_chars() {
     let (at, mut ucmd) = at_and_ucmd!();
     at.touch("äöü.txt");
@@ -848,12 +852,12 @@ fn test_output_field_no_more_than_once() {
 }
 
 #[test]
-#[cfg(not(target_os = "freebsd"))] // FIXME: fix this test for FreeBSD
+#[cfg(not(any(target_os = "freebsd", target_os = "windows")))] // FIXME: fix test for FreeBSD & Win
 fn test_nonexistent_file() {
     new_ucmd!()
         .arg("does-not-exist")
         .fails()
-        .stderr_only("df: does-not-exist: No such file or directory");
+        .stderr_only("df: does-not-exist: No such file or directory\n");
     new_ucmd!()
         .args(&["--output=file", "does-not-exist", "."])
         .fails()

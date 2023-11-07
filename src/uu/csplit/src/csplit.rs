@@ -1,9 +1,10 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 #![crate_name = "uu_csplit"]
 // spell-checker:ignore rustdoc
 #![allow(rustdoc::private_intra_doc_links)]
-
-#[macro_use]
-extern crate uucore;
 
 use std::cmp::Ordering;
 use std::io::{self, BufReader};
@@ -16,7 +17,7 @@ use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 use regex::Regex;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult};
-use uucore::format_usage;
+use uucore::{crash_if_err, format_usage, help_about, help_section, help_usage};
 
 mod csplit_error;
 mod patterns;
@@ -25,9 +26,9 @@ mod split_name;
 use crate::csplit_error::CsplitError;
 use crate::split_name::SplitName;
 
-static ABOUT: &str = "split a file into sections determined by context lines";
-static LONG_HELP: &str = "Output pieces of FILE separated by PATTERN(s) to files 'xx00', 'xx01', ..., and output byte counts of each piece to standard output.";
-const USAGE: &str = "{} [OPTION]... FILE PATTERN...";
+const ABOUT: &str = help_about!("csplit.md");
+const AFTER_HELP: &str = help_section!("after help", "csplit.md");
+const USAGE: &str = help_usage!("csplit.md");
 
 mod options {
     pub const SUFFIX_FORMAT: &str = "suffix-format";
@@ -61,15 +62,9 @@ impl CsplitOptions {
             split_name: crash_if_err!(
                 1,
                 SplitName::new(
-                    matches
-                        .get_one::<String>(options::PREFIX)
-                        .map(|s| s.to_owned()),
-                    matches
-                        .get_one::<String>(options::SUFFIX_FORMAT)
-                        .map(|s| s.to_owned()),
-                    matches
-                        .get_one::<String>(options::DIGITS)
-                        .map(|s| s.to_owned())
+                    matches.get_one::<String>(options::PREFIX).cloned(),
+                    matches.get_one::<String>(options::SUFFIX_FORMAT).cloned(),
+                    matches.get_one::<String>(options::DIGITS).cloned()
                 )
             ),
             keep_files,
@@ -130,7 +125,7 @@ where
     I: Iterator<Item = (usize, io::Result<String>)>,
 {
     // split the file based on patterns
-    for pattern in patterns.into_iter() {
+    for pattern in patterns {
         let pattern_as_str = pattern.to_string();
         let is_skip = matches!(pattern, patterns::Pattern::SkipToMatch(_, _, _));
         match pattern {
@@ -231,7 +226,7 @@ impl<'a> SplitWriter<'a> {
     /// The creation of the split file may fail with some [`io::Error`].
     fn new_writer(&mut self) -> io::Result<()> {
         let file_name = self.options.split_name.get(self.counter);
-        let file = File::create(&file_name)?;
+        let file = File::create(file_name)?;
         self.current_writer = Some(BufWriter::new(file));
         self.counter += 1;
         self.size = 0;
@@ -359,6 +354,7 @@ impl<'a> SplitWriter<'a> {
     /// - if no line matched, an [`CsplitError::MatchNotFound`].
     /// - if there are not enough lines to accommodate the offset, an
     /// [`CsplitError::LineOutOfRange`].
+    #[allow(clippy::cognitive_complexity)]
     fn do_to_match<I>(
         &mut self,
         pattern_as_str: &str,
@@ -554,169 +550,6 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn input_splitter() {
-        let input = vec![
-            Ok(String::from("aaa")),
-            Ok(String::from("bbb")),
-            Ok(String::from("ccc")),
-            Ok(String::from("ddd")),
-        ];
-        let mut input_splitter = InputSplitter::new(input.into_iter().enumerate());
-
-        input_splitter.set_size_of_buffer(2);
-        assert_eq!(input_splitter.buffer_len(), 0);
-
-        match input_splitter.next() {
-            Some((0, Ok(line))) => {
-                assert_eq!(line, String::from("aaa"));
-                assert_eq!(input_splitter.add_line_to_buffer(0, line), None);
-                assert_eq!(input_splitter.buffer_len(), 1);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((1, Ok(line))) => {
-                assert_eq!(line, String::from("bbb"));
-                assert_eq!(input_splitter.add_line_to_buffer(1, line), None);
-                assert_eq!(input_splitter.buffer_len(), 2);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((2, Ok(line))) => {
-                assert_eq!(line, String::from("ccc"));
-                assert_eq!(
-                    input_splitter.add_line_to_buffer(2, line),
-                    Some(String::from("aaa"))
-                );
-                assert_eq!(input_splitter.buffer_len(), 2);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        input_splitter.rewind_buffer();
-
-        match input_splitter.next() {
-            Some((1, Ok(line))) => {
-                assert_eq!(line, String::from("bbb"));
-                assert_eq!(input_splitter.buffer_len(), 1);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((2, Ok(line))) => {
-                assert_eq!(line, String::from("ccc"));
-                assert_eq!(input_splitter.buffer_len(), 0);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((3, Ok(line))) => {
-                assert_eq!(line, String::from("ddd"));
-                assert_eq!(input_splitter.buffer_len(), 0);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        assert!(input_splitter.next().is_none());
-    }
-
-    #[test]
-    fn input_splitter_interrupt_rewind() {
-        let input = vec![
-            Ok(String::from("aaa")),
-            Ok(String::from("bbb")),
-            Ok(String::from("ccc")),
-            Ok(String::from("ddd")),
-        ];
-        let mut input_splitter = InputSplitter::new(input.into_iter().enumerate());
-
-        input_splitter.set_size_of_buffer(3);
-        assert_eq!(input_splitter.buffer_len(), 0);
-
-        match input_splitter.next() {
-            Some((0, Ok(line))) => {
-                assert_eq!(line, String::from("aaa"));
-                assert_eq!(input_splitter.add_line_to_buffer(0, line), None);
-                assert_eq!(input_splitter.buffer_len(), 1);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((1, Ok(line))) => {
-                assert_eq!(line, String::from("bbb"));
-                assert_eq!(input_splitter.add_line_to_buffer(1, line), None);
-                assert_eq!(input_splitter.buffer_len(), 2);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((2, Ok(line))) => {
-                assert_eq!(line, String::from("ccc"));
-                assert_eq!(input_splitter.add_line_to_buffer(2, line), None);
-                assert_eq!(input_splitter.buffer_len(), 3);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        input_splitter.rewind_buffer();
-
-        match input_splitter.next() {
-            Some((0, Ok(line))) => {
-                assert_eq!(line, String::from("aaa"));
-                assert_eq!(input_splitter.add_line_to_buffer(0, line), None);
-                assert_eq!(input_splitter.buffer_len(), 3);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((0, Ok(line))) => {
-                assert_eq!(line, String::from("aaa"));
-                assert_eq!(input_splitter.buffer_len(), 2);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((1, Ok(line))) => {
-                assert_eq!(line, String::from("bbb"));
-                assert_eq!(input_splitter.buffer_len(), 1);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((2, Ok(line))) => {
-                assert_eq!(line, String::from("ccc"));
-                assert_eq!(input_splitter.buffer_len(), 0);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        match input_splitter.next() {
-            Some((3, Ok(line))) => {
-                assert_eq!(line, String::from("ddd"));
-                assert_eq!(input_splitter.buffer_len(), 0);
-            }
-            item => panic!("wrong item: {:?}", item),
-        };
-
-        assert!(input_splitter.next().is_none());
-    }
-}
-
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let args = args.collect_ignore();
@@ -817,5 +650,170 @@ pub fn uu_app() -> Command {
                 .action(clap::ArgAction::Append)
                 .required(true),
         )
-        .after_help(LONG_HELP)
+        .after_help(AFTER_HELP)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(clippy::cognitive_complexity)]
+    fn input_splitter() {
+        let input = vec![
+            Ok(String::from("aaa")),
+            Ok(String::from("bbb")),
+            Ok(String::from("ccc")),
+            Ok(String::from("ddd")),
+        ];
+        let mut input_splitter = InputSplitter::new(input.into_iter().enumerate());
+
+        input_splitter.set_size_of_buffer(2);
+        assert_eq!(input_splitter.buffer_len(), 0);
+
+        match input_splitter.next() {
+            Some((0, Ok(line))) => {
+                assert_eq!(line, String::from("aaa"));
+                assert_eq!(input_splitter.add_line_to_buffer(0, line), None);
+                assert_eq!(input_splitter.buffer_len(), 1);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((1, Ok(line))) => {
+                assert_eq!(line, String::from("bbb"));
+                assert_eq!(input_splitter.add_line_to_buffer(1, line), None);
+                assert_eq!(input_splitter.buffer_len(), 2);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((2, Ok(line))) => {
+                assert_eq!(line, String::from("ccc"));
+                assert_eq!(
+                    input_splitter.add_line_to_buffer(2, line),
+                    Some(String::from("aaa"))
+                );
+                assert_eq!(input_splitter.buffer_len(), 2);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        input_splitter.rewind_buffer();
+
+        match input_splitter.next() {
+            Some((1, Ok(line))) => {
+                assert_eq!(line, String::from("bbb"));
+                assert_eq!(input_splitter.buffer_len(), 1);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((2, Ok(line))) => {
+                assert_eq!(line, String::from("ccc"));
+                assert_eq!(input_splitter.buffer_len(), 0);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((3, Ok(line))) => {
+                assert_eq!(line, String::from("ddd"));
+                assert_eq!(input_splitter.buffer_len(), 0);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        assert!(input_splitter.next().is_none());
+    }
+
+    #[test]
+    #[allow(clippy::cognitive_complexity)]
+    fn input_splitter_interrupt_rewind() {
+        let input = vec![
+            Ok(String::from("aaa")),
+            Ok(String::from("bbb")),
+            Ok(String::from("ccc")),
+            Ok(String::from("ddd")),
+        ];
+        let mut input_splitter = InputSplitter::new(input.into_iter().enumerate());
+
+        input_splitter.set_size_of_buffer(3);
+        assert_eq!(input_splitter.buffer_len(), 0);
+
+        match input_splitter.next() {
+            Some((0, Ok(line))) => {
+                assert_eq!(line, String::from("aaa"));
+                assert_eq!(input_splitter.add_line_to_buffer(0, line), None);
+                assert_eq!(input_splitter.buffer_len(), 1);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((1, Ok(line))) => {
+                assert_eq!(line, String::from("bbb"));
+                assert_eq!(input_splitter.add_line_to_buffer(1, line), None);
+                assert_eq!(input_splitter.buffer_len(), 2);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((2, Ok(line))) => {
+                assert_eq!(line, String::from("ccc"));
+                assert_eq!(input_splitter.add_line_to_buffer(2, line), None);
+                assert_eq!(input_splitter.buffer_len(), 3);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        input_splitter.rewind_buffer();
+
+        match input_splitter.next() {
+            Some((0, Ok(line))) => {
+                assert_eq!(line, String::from("aaa"));
+                assert_eq!(input_splitter.add_line_to_buffer(0, line), None);
+                assert_eq!(input_splitter.buffer_len(), 3);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((0, Ok(line))) => {
+                assert_eq!(line, String::from("aaa"));
+                assert_eq!(input_splitter.buffer_len(), 2);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((1, Ok(line))) => {
+                assert_eq!(line, String::from("bbb"));
+                assert_eq!(input_splitter.buffer_len(), 1);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((2, Ok(line))) => {
+                assert_eq!(line, String::from("ccc"));
+                assert_eq!(input_splitter.buffer_len(), 0);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        match input_splitter.next() {
+            Some((3, Ok(line))) => {
+                assert_eq!(line, String::from("ddd"));
+                assert_eq!(input_splitter.buffer_len(), 0);
+            }
+            item => panic!("wrong item: {item:?}"),
+        };
+
+        assert!(input_splitter.next().is_none());
+    }
 }

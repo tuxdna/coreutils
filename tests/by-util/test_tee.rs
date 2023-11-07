@@ -1,4 +1,9 @@
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
+use std::fmt::Write;
 
 // tests for basic tee functionality.
 // inspired by:
@@ -70,7 +75,10 @@ fn test_tee_append() {
 fn test_tee_no_more_writeable_1() {
     // equals to 'tee /dev/full out2 <multi_read' call
     let (at, mut ucmd) = at_and_ucmd!();
-    let content = (1..=10).map(|x| format!("{}\n", x)).collect::<String>();
+    let content = (1..=10).fold(String::new(), |mut output, x| {
+        let _ = writeln!(output, "{x}");
+        output
+    });
     let file_out = "tee_file_out";
 
     ucmd.arg("/dev/full")
@@ -90,7 +98,10 @@ fn test_tee_no_more_writeable_2() {
     // but currently there is no way to redirect stdout to /dev/full
     // so this test is disabled
     let (_at, mut ucmd) = at_and_ucmd!();
-    let _content = (1..=10).map(|x| format!("{}\n", x)).collect::<String>();
+    let _content = (1..=10).fold(String::new(), |mut output, x| {
+        let _ = writeln!(output, "{x}");
+        output
+    });
     let file_out_a = "tee_file_out_a";
     let file_out_b = "tee_file_out_b";
 
@@ -108,21 +119,21 @@ fn test_tee_no_more_writeable_2() {
 
 #[cfg(target_os = "linux")]
 mod linux_only {
-    use crate::common::util::*;
+    use crate::common::util::{AtPath, TestScenario, UCommand};
 
+    use std::fmt::Write;
     use std::fs::File;
-    use std::io::Write;
-    use std::process::Output;
-    use std::thread;
+    use std::process::{Output, Stdio};
 
     fn make_broken_pipe() -> File {
         use libc::c_int;
         use std::os::unix::io::FromRawFd;
 
         let mut fds: [c_int; 2] = [0, 0];
-        if unsafe { libc::pipe(&mut fds as *mut c_int) } != 0 {
-            panic!("Failed to create pipe");
-        }
+        assert!(
+            (unsafe { libc::pipe(&mut fds as *mut c_int) } == 0),
+            "Failed to create pipe"
+        );
 
         // Drop the read end of the pipe
         let _ = unsafe { File::from_raw_fd(fds[0]) };
@@ -132,23 +143,17 @@ mod linux_only {
     }
 
     fn run_tee(proc: &mut UCommand) -> (String, Output) {
-        let content = (1..=100000).map(|x| format!("{}\n", x)).collect::<String>();
-
-        let mut prog = proc.run_no_wait();
-
-        let mut stdin = prog
-            .stdin
-            .take()
-            .unwrap_or_else(|| panic!("Could not take child process stdin"));
-
-        let c = content.clone();
-        let thread = thread::spawn(move || {
-            let _ = stdin.write_all(c.as_bytes());
+        let content = (1..=100_000).fold(String::new(), |mut output, x| {
+            let _ = writeln!(output, "{x}");
+            output
         });
 
-        let output = prog.wait_with_output().unwrap();
-
-        thread.join().unwrap();
+        #[allow(deprecated)]
+        let output = proc
+            .ignore_stdin_write_error()
+            .set_stdin(Stdio::piped())
+            .run_no_wait()
+            .pipe_in_and_wait_with_output(content.as_bytes());
 
         (content, output)
     }
@@ -215,9 +220,7 @@ mod linux_only {
             contents.len()
         );
         assert!(contents.starts_with(&compare),
-                "Expected truncated output to be a prefix of the correct output, but it isn't.\n Correct: {}\n Compare: {}",
-                contents,
-                compare);
+                "Expected truncated output to be a prefix of the correct output, but it isn't.\n Correct: {contents}\n Compare: {compare}");
     }
 
     #[test]

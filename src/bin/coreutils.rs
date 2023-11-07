@@ -1,9 +1,9 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Michael Gehring <mg@ebfe.org>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
+
+// spell-checker:ignore manpages mangen
 
 use clap::{Arg, Command};
 use clap_complete::Shell;
@@ -20,8 +20,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 include!(concat!(env!("OUT_DIR"), "/uutils_map.rs"));
 
 fn usage<T>(utils: &UtilityMap<T>, name: &str) {
-    println!("{} {} (multi-call binary)\n", name, VERSION);
-    println!("Usage: {} [function [arguments...]]\n", name);
+    println!("{name} {VERSION} (multi-call binary)\n");
+    println!("Usage: {name} [function [arguments...]]\n");
     println!("Currently defined functions:\n");
     #[allow(clippy::map_clone)]
     let mut utils: Vec<&str> = utils.keys().map(|&s| s).collect();
@@ -41,10 +41,11 @@ fn binary_path(args: &mut impl Iterator<Item = OsString>) -> PathBuf {
     }
 }
 
-fn name(binary_path: &Path) -> &str {
-    binary_path.file_stem().unwrap().to_str().unwrap()
+fn name(binary_path: &Path) -> Option<&str> {
+    binary_path.file_stem()?.to_str()
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn main() {
     uucore::panic::mute_sigpipe_panic();
 
@@ -52,7 +53,10 @@ fn main() {
     let mut args = uucore::args_os();
 
     let binary = binary_path(&mut args);
-    let binary_as_util = name(&binary);
+    let binary_as_util = name(&binary).unwrap_or_else(|| {
+        usage(&utils, "<unknown binary name>");
+        process::exit(0);
+    });
 
     // binary name equals util name?
     if let Some(&(uumain, _)) = utils.get(binary_as_util) {
@@ -88,6 +92,10 @@ fn main() {
 
         if util == "completion" {
             gen_completions(args, &utils);
+        }
+
+        if util == "manpage" {
+            gen_manpage(args, &utils);
         }
 
         match utils.get(util) {
@@ -153,7 +161,7 @@ fn gen_completions<T: uucore::Args>(
         .get_matches_from(std::iter::once(OsString::from("completion")).chain(args));
 
     let utility = matches.get_one::<String>("utility").unwrap();
-    let shell = matches.get_one::<Shell>("shell").unwrap().to_owned();
+    let shell = *matches.get_one::<Shell>("shell").unwrap();
 
     let mut command = if utility == "coreutils" {
         gen_coreutils_app(util_map)
@@ -167,10 +175,50 @@ fn gen_completions<T: uucore::Args>(
     process::exit(0);
 }
 
+/// Generate the manpage for the utility in the first parameter
+fn gen_manpage<T: uucore::Args>(
+    args: impl Iterator<Item = OsString>,
+    util_map: &UtilityMap<T>,
+) -> ! {
+    let all_utilities: Vec<_> = std::iter::once("coreutils")
+        .chain(util_map.keys().copied())
+        .collect();
+
+    let matches = Command::new("manpage")
+        .about("Prints manpage to stdout")
+        .arg(
+            Arg::new("utility")
+                .value_parser(clap::builder::PossibleValuesParser::new(all_utilities))
+                .required(true),
+        )
+        .get_matches_from(std::iter::once(OsString::from("manpage")).chain(args));
+
+    let utility = matches.get_one::<String>("utility").unwrap();
+
+    let command = if utility == "coreutils" {
+        gen_coreutils_app(util_map)
+    } else {
+        util_map.get(utility).unwrap().1()
+    };
+
+    let man = clap_mangen::Man::new(command);
+    man.render(&mut io::stdout())
+        .expect("Man page generation failed");
+    io::stdout().flush().unwrap();
+    process::exit(0);
+}
+
 fn gen_coreutils_app<T: uucore::Args>(util_map: &UtilityMap<T>) -> Command {
     let mut command = Command::new("coreutils");
-    for (_, (_, sub_app)) in util_map {
-        command = command.subcommand(sub_app());
+    for (name, (_, sub_app)) in util_map {
+        // Recreate a small subcommand with only the relevant info
+        // (name & short description)
+        let about = sub_app()
+            .get_about()
+            .expect("Could not get the 'about'")
+            .to_string();
+        let sub_app = Command::new(name).about(about);
+        command = command.subcommand(sub_app);
     }
     command
 }

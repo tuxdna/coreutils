@@ -1,9 +1,7 @@
-//  * This file is part of `fmt` from the uutils coreutils package.
-//  *
-//  * (c) kwantam <kwantam@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) INFTY MULT PSKIP accum aftertab beforetab breakwords fmt's formatline linebreak linebreaking linebreaks linelen maxlength minlength nchars noformat noformatline ostream overlen parasplit pfxind plass pmatch poffset posn powf prefixindent punct signum slen sstart tabwidth tlen underlen winfo wlen wordlen wordsplits xanti xprefix
 
@@ -163,7 +161,7 @@ impl<'a> Iterator for FileLines<'a> {
         // Err(true) indicates that this was a linebreak,
         // which is important to know when detecting mail headers
         if n.chars().all(char::is_whitespace) {
-            return Some(Line::NoFormatLine("".to_owned(), true));
+            return Some(Line::NoFormatLine(String::new(), true));
         }
 
         let (pmatch, poffset) = self.match_prefix(&n[..]);
@@ -275,6 +273,7 @@ impl<'a> ParagraphStream<'a> {
 impl<'a> Iterator for ParagraphStream<'a> {
     type Item = Result<Paragraph, String>;
 
+    #[allow(clippy::cognitive_complexity)]
     fn next(&mut self) -> Option<Result<Paragraph, String>> {
         // return a NoFormatLine in an Err; it should immediately be output
         let noformat = match self.lines.peek() {
@@ -580,11 +579,11 @@ impl<'a> Iterator for WordSplit<'a> {
         // points to whitespace character OR end of string
         let mut word_nchars = 0;
         self.position = match self.string[word_start..].find(|x: char| {
-            if !x.is_whitespace() {
+            if x.is_whitespace() {
+                true
+            } else {
                 word_nchars += char_width(x);
                 false
-            } else {
-                true
             }
         }) {
             None => self.length,
@@ -597,7 +596,7 @@ impl<'a> Iterator for WordSplit<'a> {
             self.prev_punct && (before_tab.is_some() || word_start_relative > 1);
 
         // now record whether this word ends in punctuation
-        self.prev_punct = match self.string[..self.position].chars().rev().next() {
+        self.prev_punct = match self.string[..self.position].chars().next_back() {
             Some(ch) => WordSplit::is_punctuation(ch),
             _ => panic!("fatal: expected word not to be empty"),
         };

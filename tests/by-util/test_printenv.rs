@@ -1,30 +1,37 @@
-use crate::common::util::*;
-use std::env;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
 
 #[test]
 fn test_get_all() {
-    let key = "KEY";
-    env::set_var(key, "VALUE");
-    assert_eq!(env::var(key), Ok("VALUE".to_string()));
-
     TestScenario::new(util_name!())
-        .ucmd_keepenv()
+        .ucmd()
+        .env("HOME", "FOO")
+        .env("KEY", "VALUE")
         .succeeds()
-        .stdout_contains("HOME=")
+        .stdout_contains("HOME=FOO")
         .stdout_contains("KEY=VALUE");
 }
 
 #[test]
 fn test_get_var() {
-    let key = "KEY";
-    env::set_var(key, "VALUE");
-    assert_eq!(env::var(key), Ok("VALUE".to_string()));
-
     let result = TestScenario::new(util_name!())
-        .ucmd_keepenv()
+        .ucmd()
+        .env("KEY", "VALUE")
         .arg("KEY")
         .succeeds();
 
     assert!(!result.stdout_str().is_empty());
     assert_eq!(result.stdout_str().trim(), "VALUE");
+}
+
+#[test]
+fn test_ignore_equal_var() {
+    let scene = TestScenario::new(util_name!());
+    // tested by gnu/tests/misc/printenv.sh
+    let result = scene.ucmd().env("a=b", "c").arg("a=b").fails();
+
+    assert!(result.stdout_str().is_empty());
 }

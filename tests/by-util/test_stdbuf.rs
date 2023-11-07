@@ -1,5 +1,9 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 #[cfg(not(target_os = "windows"))]
-use crate::common::util::*;
+use crate::common::util::TestScenario;
 
 #[cfg(not(target_os = "windows"))]
 #[test]
@@ -30,7 +34,7 @@ fn test_stdbuf_no_buffer_option_fails() {
     ts.ucmd()
         .args(&["head"])
         .fails()
-        .stderr_contains("The following required arguments were not provided:");
+        .stderr_contains("the following required arguments were not provided:");
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -61,7 +65,7 @@ fn test_stdbuf_invalid_mode_fails() {
             .args(&[*option, "1024R", "head"])
             .fails()
             .code_is(125)
-            .stderr_only("stdbuf: invalid mode '1024R'");
+            .stderr_only("stdbuf: invalid mode '1024R': Value too large for defined data type\n");
         #[cfg(not(target_pointer_width = "128"))]
         new_ucmd!()
             .args(&[*option, "1Y", "head"])

@@ -1,8 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
-// TODO: Support -f flag
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (ToDO) istr chiter argptr ilen extendedbigdecimal extendedbigint numberparse
 use std::io::{stdout, ErrorKind, Write};
 use std::process::exit;
@@ -12,9 +11,9 @@ use num_traits::Zero;
 
 use uucore::error::FromIo;
 use uucore::error::UResult;
-use uucore::format_usage;
-use uucore::memo::Memo;
+use uucore::memo::printf;
 use uucore::show;
+use uucore::{format_usage, help_about, help_usage};
 
 mod error;
 mod extendedbigdecimal;
@@ -27,23 +26,21 @@ use crate::extendedbigint::ExtendedBigInt;
 use crate::number::Number;
 use crate::number::PreciseNumber;
 
-static ABOUT: &str = "Display numbers from FIRST to LAST, in steps of INCREMENT.";
-const USAGE: &str = "\
-    {} [OPTION]... LAST
-    {} [OPTION]... FIRST LAST
-    {} [OPTION]... FIRST INCREMENT LAST";
-static OPT_SEPARATOR: &str = "separator";
-static OPT_TERMINATOR: &str = "terminator";
-static OPT_WIDTHS: &str = "widths";
-static OPT_FORMAT: &str = "format";
+const ABOUT: &str = help_about!("seq.md");
+const USAGE: &str = help_usage!("seq.md");
 
-static ARG_NUMBERS: &str = "numbers";
+const OPT_SEPARATOR: &str = "separator";
+const OPT_TERMINATOR: &str = "terminator";
+const OPT_EQUAL_WIDTH: &str = "equal-width";
+const OPT_FORMAT: &str = "format";
+
+const ARG_NUMBERS: &str = "numbers";
 
 #[derive(Clone)]
 struct SeqOptions<'a> {
     separator: String,
     terminator: String,
-    widths: bool,
+    equal_width: bool,
     format: Option<&'a str>,
 }
 
@@ -61,10 +58,13 @@ type RangeFloat = (ExtendedBigDecimal, ExtendedBigDecimal, ExtendedBigDecimal);
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
 
-    let numbers = matches
-        .get_many::<String>(ARG_NUMBERS)
-        .unwrap()
-        .collect::<Vec<_>>();
+    let numbers_option = matches.get_many::<String>(ARG_NUMBERS);
+
+    if numbers_option.is_none() {
+        return Err(SeqError::NoArguments.into());
+    }
+
+    let numbers = numbers_option.unwrap().collect::<Vec<_>>();
 
     let options = SeqOptions {
         separator: matches
@@ -77,7 +77,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             .map(|s| s.as_str())
             .unwrap_or("\n")
             .to_string(),
-        widths: matches.get_flag(OPT_WIDTHS),
+        equal_width: matches.get_flag(OPT_EQUAL_WIDTH),
         format: matches.get_one::<String>(OPT_FORMAT).map(|s| s.as_str()),
     };
 
@@ -126,7 +126,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 (first, increment, last),
                 &options.separator,
                 &options.terminator,
-                options.widths,
+                options.equal_width,
                 padding,
                 options.format,
             )
@@ -140,7 +140,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             largest_dec,
             &options.separator,
             &options.terminator,
-            options.widths,
+            options.equal_width,
             padding,
             options.format,
         ),
@@ -173,9 +173,9 @@ pub fn uu_app() -> Command {
                 .help("Terminator character (defaults to \\n)"),
         )
         .arg(
-            Arg::new(OPT_WIDTHS)
+            Arg::new(OPT_EQUAL_WIDTH)
                 .short('w')
-                .long("widths")
+                .long("equal-width")
                 .help("Equalize widths of all numbers by padding with zeros")
                 .action(ArgAction::SetTrue),
         )
@@ -206,25 +206,14 @@ fn write_value_float(
     value: &ExtendedBigDecimal,
     width: usize,
     precision: usize,
-    _is_first_iteration: bool,
 ) -> std::io::Result<()> {
     let value_as_str =
         if *value == ExtendedBigDecimal::Infinity || *value == ExtendedBigDecimal::MinusInfinity {
-            format!(
-                "{value:>width$.precision$}",
-                value = value,
-                width = width,
-                precision = precision,
-            )
+            format!("{value:>width$.precision$}")
         } else {
-            format!(
-                "{value:>0width$.precision$}",
-                value = value,
-                width = width,
-                precision = precision,
-            )
+            format!("{value:>0width$.precision$}")
         };
-    write!(writer, "{}", value_as_str)
+    write!(writer, "{value_as_str}")
 }
 
 /// Write a big int formatted according to the given parameters.
@@ -233,20 +222,17 @@ fn write_value_int(
     value: &ExtendedBigInt,
     width: usize,
     pad: bool,
-    is_first_iteration: bool,
 ) -> std::io::Result<()> {
     let value_as_str = if pad {
-        if *value == ExtendedBigInt::MinusZero && is_first_iteration {
-            format!("-{value:>0width$}", value = value, width = width - 1,)
+        if *value == ExtendedBigInt::MinusZero {
+            format!("{value:0<width$}")
         } else {
-            format!("{value:>0width$}", value = value, width = width,)
+            format!("{value:>0width$}")
         }
-    } else if *value == ExtendedBigInt::MinusZero && is_first_iteration {
-        format!("-{}", value)
     } else {
-        format!("{}", value)
+        format!("{value}")
     };
-    write!(writer, "{}", value_as_str)
+    write!(writer, "{value_as_str}")
 }
 
 // TODO `print_seq()` and `print_seq_integers()` are nearly identical,
@@ -270,18 +256,15 @@ fn print_seq(
     let mut is_first_iteration = true;
     while !done_printing(&value, &increment, &last) {
         if !is_first_iteration {
-            write!(stdout, "{}", separator)?;
+            write!(stdout, "{separator}")?;
         }
         // If there was an argument `-f FORMAT`, then use that format
         // template instead of the default formatting strategy.
         //
-        // The `Memo::run_all()` function takes in the template and
-        // the current value and writes the result to `stdout`.
-        //
-        // TODO The `run_all()` method takes a string as its second
+        // TODO The `printf()` method takes a string as its second
         // parameter but we have an `ExtendedBigDecimal`. In order to
         // satisfy the signature of the function, we convert the
-        // `ExtendedBigDecimal` into a string. The `Memo::run_all()`
+        // `ExtendedBigDecimal` into a string. The `printf()`
         // logic will subsequently parse that string into something
         // similar to an `ExtendedBigDecimal` again before rendering
         // it as a string and ultimately writing to `stdout`. We
@@ -289,26 +272,20 @@ fn print_seq(
         // strings.
         match format {
             Some(f) => {
-                let s = format!("{}", value);
-                if let Err(x) = Memo::run_all(f, &[s]) {
+                let s = format!("{value}");
+                if let Err(x) = printf(f, &[s]) {
                     show!(x);
                     exit(1);
                 }
             }
-            None => write_value_float(
-                &mut stdout,
-                &value,
-                padding,
-                largest_dec,
-                is_first_iteration,
-            )?,
+            None => write_value_float(&mut stdout, &value, padding, largest_dec)?,
         }
         // TODO Implement augmenting addition.
         value = value + increment.clone();
         is_first_iteration = false;
     }
     if !is_first_iteration {
-        write!(stdout, "{}", terminator)?;
+        write!(stdout, "{terminator}")?;
     }
     stdout.flush()?;
     Ok(())
@@ -343,24 +320,24 @@ fn print_seq_integers(
     let mut is_first_iteration = true;
     while !done_printing(&value, &increment, &last) {
         if !is_first_iteration {
-            write!(stdout, "{}", separator)?;
+            write!(stdout, "{separator}")?;
         }
         // If there was an argument `-f FORMAT`, then use that format
         // template instead of the default formatting strategy.
         //
-        // The `Memo::run_all()` function takes in the template and
+        // The `printf()` function takes in the template and
         // the current value and writes the result to `stdout`.
         //
         // TODO See similar comment about formatting in `print_seq()`.
         match format {
             Some(f) => {
-                let s = format!("{}", value);
-                if let Err(x) = Memo::run_all(f, &[s]) {
+                let s = format!("{value}");
+                if let Err(x) = printf(f, &[s]) {
                     show!(x);
                     exit(1);
                 }
             }
-            None => write_value_int(&mut stdout, &value, padding, pad, is_first_iteration)?,
+            None => write_value_int(&mut stdout, &value, padding, pad)?,
         }
         // TODO Implement augmenting addition.
         value = value + increment.clone();
@@ -368,7 +345,7 @@ fn print_seq_integers(
     }
 
     if !is_first_iteration {
-        write!(stdout, "{}", terminator)?;
+        write!(stdout, "{terminator}")?;
     }
     Ok(())
 }

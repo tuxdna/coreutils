@@ -1,114 +1,87 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Joao Oliveira <joaoxsouls@gmail.com>
-// (c) Jian Zeng <anonymousknight96 AT gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-// last synced with: uname (GNU coreutils) 8.21
-
-// spell-checker:ignore (ToDO) nodename kernelname kernelrelease kernelversion sysname hwplatform mnrsv
+// spell-checker:ignore (API) nodename osname sysname (options) mnrsv mnrsvo
 
 use clap::{crate_version, Arg, ArgAction, Command};
 use platform_info::*;
 use uucore::{
-    error::{FromIo, UResult},
-    format_usage,
+    error::{UResult, USimpleError},
+    format_usage, help_about, help_usage,
 };
 
-const ABOUT: &str = r#"Print certain system information.
-With no OPTION, same as -s."#;
-const USAGE: &str = "{} [OPTION]...";
+const ABOUT: &str = help_about!("uname.md");
+const USAGE: &str = help_usage!("uname.md");
 
 pub mod options {
     pub static ALL: &str = "all";
-    pub static KERNELNAME: &str = "kernel-name";
+    pub static KERNEL_NAME: &str = "kernel-name";
     pub static NODENAME: &str = "nodename";
-    pub static KERNELVERSION: &str = "kernel-version";
-    pub static KERNELRELEASE: &str = "kernel-release";
+    pub static KERNEL_VERSION: &str = "kernel-version";
+    pub static KERNEL_RELEASE: &str = "kernel-release";
     pub static MACHINE: &str = "machine";
     pub static PROCESSOR: &str = "processor";
-    pub static HWPLATFORM: &str = "hardware-platform";
+    pub static HARDWARE_PLATFORM: &str = "hardware-platform";
     pub static OS: &str = "operating-system";
 }
-
-#[cfg(all(target_os = "linux", any(target_env = "gnu", target_env = "")))]
-const HOST_OS: &str = "GNU/Linux";
-#[cfg(all(target_os = "linux", not(any(target_env = "gnu", target_env = ""))))]
-const HOST_OS: &str = "Linux";
-#[cfg(target_os = "android")]
-const HOST_OS: &str = "Android";
-#[cfg(target_os = "windows")]
-const HOST_OS: &str = "Windows NT";
-#[cfg(target_os = "freebsd")]
-const HOST_OS: &str = "FreeBSD";
-#[cfg(target_os = "netbsd")]
-const HOST_OS: &str = "NetBSD";
-#[cfg(target_os = "openbsd")]
-const HOST_OS: &str = "OpenBSD";
-#[cfg(target_vendor = "apple")]
-const HOST_OS: &str = "Darwin";
-#[cfg(target_os = "fuchsia")]
-const HOST_OS: &str = "Fuchsia";
-#[cfg(target_os = "redox")]
-const HOST_OS: &str = "Redox";
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
 
-    let uname =
-        PlatformInfo::new().map_err_context(|| "failed to create PlatformInfo".to_string())?;
+    let uname = PlatformInfo::new().map_err(|_e| USimpleError::new(1, "cannot get system name"))?;
+
     let mut output = String::new();
 
     let all = matches.get_flag(options::ALL);
-    let kernelname = matches.get_flag(options::KERNELNAME);
+    let kernel_name = matches.get_flag(options::KERNEL_NAME);
     let nodename = matches.get_flag(options::NODENAME);
-    let kernelrelease = matches.get_flag(options::KERNELRELEASE);
-    let kernelversion = matches.get_flag(options::KERNELVERSION);
+    let kernel_release = matches.get_flag(options::KERNEL_RELEASE);
+    let kernel_version = matches.get_flag(options::KERNEL_VERSION);
     let machine = matches.get_flag(options::MACHINE);
     let processor = matches.get_flag(options::PROCESSOR);
-    let hwplatform = matches.get_flag(options::HWPLATFORM);
+    let hardware_platform = matches.get_flag(options::HARDWARE_PLATFORM);
     let os = matches.get_flag(options::OS);
 
     let none = !(all
-        || kernelname
+        || kernel_name
         || nodename
-        || kernelrelease
-        || kernelversion
+        || kernel_release
+        || kernel_version
         || machine
         || os
         || processor
-        || hwplatform);
+        || hardware_platform);
 
-    if kernelname || all || none {
-        output.push_str(&uname.sysname());
+    if kernel_name || all || none {
+        output.push_str(&uname.sysname().to_string_lossy());
         output.push(' ');
     }
 
     if nodename || all {
-        output.push_str(&uname.nodename());
+        output.push_str(&uname.nodename().to_string_lossy());
         output.push(' ');
     }
 
-    if kernelrelease || all {
-        output.push_str(&uname.release());
+    if kernel_release || all {
+        output.push_str(&uname.release().to_string_lossy());
         output.push(' ');
     }
 
-    if kernelversion || all {
-        output.push_str(&uname.version());
+    if kernel_version || all {
+        output.push_str(&uname.version().to_string_lossy());
         output.push(' ');
     }
 
     if machine || all {
-        output.push_str(&uname.machine());
+        output.push_str(&uname.machine().to_string_lossy());
         output.push(' ');
     }
 
     if os || all {
-        output.push_str(HOST_OS);
+        output.push_str(&uname.osname().to_string_lossy());
         output.push(' ');
     }
 
@@ -121,7 +94,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // This option is unsupported on modern Linux systems
     // See: https://lists.gnu.org/archive/html/bug-coreutils/2005-09/msg00063.html
-    if hwplatform {
+    if hardware_platform {
         output.push_str("unknown");
         output.push(' ');
     }
@@ -141,13 +114,13 @@ pub fn uu_app() -> Command {
             Arg::new(options::ALL)
                 .short('a')
                 .long(options::ALL)
-                .help("Behave as though all of the options -mnrsv were specified.")
+                .help("Behave as though all of the options -mnrsvo were specified.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
-            Arg::new(options::KERNELNAME)
+            Arg::new(options::KERNEL_NAME)
                 .short('s')
-                .long(options::KERNELNAME)
+                .long(options::KERNEL_NAME)
                 .alias("sysname") // Obsolescent option in GNU uname
                 .help("print the kernel name.")
                 .action(ArgAction::SetTrue),
@@ -163,17 +136,17 @@ pub fn uu_app() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
-            Arg::new(options::KERNELRELEASE)
+            Arg::new(options::KERNEL_RELEASE)
                 .short('r')
-                .long(options::KERNELRELEASE)
+                .long(options::KERNEL_RELEASE)
                 .alias("release") // Obsolescent option in GNU uname
                 .help("print the operating system release.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
-            Arg::new(options::KERNELVERSION)
+            Arg::new(options::KERNEL_VERSION)
                 .short('v')
-                .long(options::KERNELVERSION)
+                .long(options::KERNEL_VERSION)
                 .help("print the operating system version.")
                 .action(ArgAction::SetTrue),
         )
@@ -200,9 +173,9 @@ pub fn uu_app() -> Command {
                 .hide(true),
         )
         .arg(
-            Arg::new(options::HWPLATFORM)
+            Arg::new(options::HARDWARE_PLATFORM)
                 .short('i')
-                .long(options::HWPLATFORM)
+                .long(options::HARDWARE_PLATFORM)
                 .help("print the hardware platform (non-portable)")
                 .action(ArgAction::SetTrue)
                 .hide(true),

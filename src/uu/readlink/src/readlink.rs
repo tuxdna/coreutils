@@ -1,14 +1,9 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Haitao Li <lihaitao@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) errno
-
-#[macro_use]
-extern crate uucore;
 
 use clap::{crate_version, Arg, ArgAction, Command};
 use std::fs;
@@ -16,11 +11,12 @@ use std::io::{stdout, Write};
 use std::path::{Path, PathBuf};
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError, UUsageError};
-use uucore::format_usage;
 use uucore::fs::{canonicalize, MissingHandling, ResolveMode};
+use uucore::line_ending::LineEnding;
+use uucore::{format_usage, help_about, help_usage, show_error};
 
-const ABOUT: &str = "Print value of a symbolic link or canonical file name.";
-const USAGE: &str = "{} [OPTION]... [FILE]...";
+const ABOUT: &str = help_about!("readlink.md");
+const USAGE: &str = help_usage!("readlink.md");
 const OPT_CANONICALIZE: &str = "canonicalize";
 const OPT_CANONICALIZE_MISSING: &str = "canonicalize-missing";
 const OPT_CANONICALIZE_EXISTING: &str = "canonicalize-existing";
@@ -70,6 +66,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         show_error!("ignoring --no-newline with multiple arguments");
         no_trailing_delimiter = false;
     }
+    let line_ending = if no_trailing_delimiter {
+        None
+    } else {
+        Some(LineEnding::from_zero_flag(use_zero))
+    };
 
     for f in &files {
         let p = PathBuf::from(f);
@@ -80,7 +81,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         };
         match path_result {
             Ok(path) => {
-                show(&path, no_trailing_delimiter, use_zero).map_err_context(String::new)?;
+                show(&path, line_ending).map_err_context(String::new)?;
             }
             Err(err) => {
                 if verbose {
@@ -102,7 +103,7 @@ pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
         .version(crate_version!())
         .about(ABOUT)
-        .override_help(format_usage(USAGE))
+        .override_usage(format_usage(USAGE))
         .infer_long_args(true)
         .arg(
             Arg::new(OPT_CANONICALIZE)
@@ -176,14 +177,11 @@ pub fn uu_app() -> Command {
         )
 }
 
-fn show(path: &Path, no_trailing_delimiter: bool, use_zero: bool) -> std::io::Result<()> {
+fn show(path: &Path, line_ending: Option<LineEnding>) -> std::io::Result<()> {
     let path = path.to_str().unwrap();
-    if no_trailing_delimiter {
-        print!("{}", path);
-    } else if use_zero {
-        print!("{}\0", path);
-    } else {
-        println!("{}", path);
+    print!("{path}");
+    if let Some(line_ending) = line_ending {
+        print!("{line_ending}");
     }
     stdout().flush()
 }

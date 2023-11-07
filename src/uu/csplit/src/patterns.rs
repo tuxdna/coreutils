@@ -1,7 +1,12 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (regex) SKIPTO UPTO ; (vars) ntimes
 
 use crate::csplit_error::CsplitError;
 use regex::Regex;
+use uucore::show_warning;
 
 /// The definition of a pattern to match on a line.
 #[derive(Debug)]
@@ -206,6 +211,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn up_to_match_pattern() {
         let input: Vec<String> = vec![
             "/test1.*end$/",
@@ -223,35 +229,35 @@ mod tests {
         assert_eq!(patterns.len(), 5);
         match patterns.get(0) {
             Some(Pattern::UpToMatch(reg, 0, ExecutePattern::Times(1))) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test1.*end$");
             }
             _ => panic!("expected UpToMatch pattern"),
         };
         match patterns.get(1) {
             Some(Pattern::UpToMatch(reg, 0, ExecutePattern::Always)) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test2.*end$");
             }
             _ => panic!("expected UpToMatch pattern"),
         };
         match patterns.get(2) {
             Some(Pattern::UpToMatch(reg, 0, ExecutePattern::Times(5))) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test3.*end$");
             }
             _ => panic!("expected UpToMatch pattern"),
         };
         match patterns.get(3) {
             Some(Pattern::UpToMatch(reg, 3, ExecutePattern::Times(1))) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test4.*end$");
             }
             _ => panic!("expected UpToMatch pattern"),
         };
         match patterns.get(4) {
             Some(Pattern::UpToMatch(reg, -3, ExecutePattern::Times(1))) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test5.*end$");
             }
             _ => panic!("expected UpToMatch pattern"),
@@ -259,6 +265,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn skip_to_match_pattern() {
         let input: Vec<String> = vec![
             "%test1.*end$%",
@@ -276,35 +283,35 @@ mod tests {
         assert_eq!(patterns.len(), 5);
         match patterns.get(0) {
             Some(Pattern::SkipToMatch(reg, 0, ExecutePattern::Times(1))) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test1.*end$");
             }
             _ => panic!("expected SkipToMatch pattern"),
         };
         match patterns.get(1) {
             Some(Pattern::SkipToMatch(reg, 0, ExecutePattern::Always)) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test2.*end$");
             }
             _ => panic!("expected SkipToMatch pattern"),
         };
         match patterns.get(2) {
             Some(Pattern::SkipToMatch(reg, 0, ExecutePattern::Times(5))) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test3.*end$");
             }
             _ => panic!("expected SkipToMatch pattern"),
         };
         match patterns.get(3) {
             Some(Pattern::SkipToMatch(reg, 3, ExecutePattern::Times(1))) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test4.*end$");
             }
             _ => panic!("expected SkipToMatch pattern"),
         };
         match patterns.get(4) {
             Some(Pattern::SkipToMatch(reg, -3, ExecutePattern::Times(1))) => {
-                let parsed_reg = format!("{}", reg);
+                let parsed_reg = format!("{reg}");
                 assert_eq!(parsed_reg, "test5.*end$");
             }
             _ => panic!("expected SkipToMatch pattern"),

@@ -1,15 +1,17 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
-// spell-checker:ignore (paths) sublink subwords azerty azeaze xcwww azeaz amaz azea qzerty tazerty
+// spell-checker:ignore (paths) sublink subwords azerty azeaze xcwww azeaz amaz azea qzerty tazerty tsublink
 #[cfg(not(windows))]
 use regex::Regex;
 #[cfg(not(windows))]
 use std::io::Write;
 
-use crate::common::util::*;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use crate::common::util::expected_result;
+use crate::common::util::TestScenario;
 
 const SUB_DIR: &str = "subdir/deeper";
 const SUB_DEEPER_DIR: &str = "subdir/deeper/deeper_dir";
@@ -82,10 +84,10 @@ fn _du_basics_subdir(s: &str) {
 ))]
 fn _du_basics_subdir(s: &str) {
     // MS-WSL linux has altered expected output
-    if !uucore::os::is_wsl_1() {
-        assert_eq!(s, "8\tsubdir/deeper\n");
-    } else {
+    if uucore::os::is_wsl_1() {
         assert_eq!(s, "0\tsubdir/deeper\n");
+    } else {
+        assert_eq!(s, "8\tsubdir/deeper\n");
     }
 }
 
@@ -95,24 +97,24 @@ fn test_du_invalid_size() {
     let ts = TestScenario::new(util_name!());
     for s in args {
         ts.ucmd()
-            .arg(format!("--{}=1fb4t", s))
+            .arg(format!("--{s}=1fb4t"))
             .arg("/tmp")
             .fails()
             .code_is(1)
-            .stderr_only(format!("du: invalid suffix in --{} argument '1fb4t'", s));
+            .stderr_only(format!("du: invalid suffix in --{s} argument '1fb4t'\n"));
         ts.ucmd()
-            .arg(format!("--{}=x", s))
+            .arg(format!("--{s}=x"))
             .arg("/tmp")
             .fails()
             .code_is(1)
-            .stderr_only(format!("du: invalid --{} argument 'x'", s));
+            .stderr_only(format!("du: invalid --{s} argument 'x'\n"));
         #[cfg(not(target_pointer_width = "128"))]
         ts.ucmd()
-            .arg(format!("--{}=1Y", s))
+            .arg(format!("--{s}=1Y"))
             .arg("/tmp")
             .fails()
             .code_is(1)
-            .stderr_only(format!("du: --{} argument '1Y' too large", s));
+            .stderr_only(format!("du: --{s} argument '1Y' too large\n"));
     }
 }
 
@@ -120,7 +122,7 @@ fn test_du_invalid_size() {
 fn test_du_basics_bad_name() {
     new_ucmd!()
         .arg("bad_name")
-        .succeeds() // TODO: replace with ".fails()" once `du` is fixed
+        .fails()
         .stderr_only("du: bad_name: No such file or directory\n");
 }
 
@@ -164,10 +166,10 @@ fn _du_soft_link(s: &str) {
 ))]
 fn _du_soft_link(s: &str) {
     // MS-WSL linux has altered expected output
-    if !uucore::os::is_wsl_1() {
-        assert_eq!(s, "16\tsubdir/links\n");
-    } else {
+    if uucore::os::is_wsl_1() {
         assert_eq!(s, "8\tsubdir/links\n");
+    } else {
+        assert_eq!(s, "16\tsubdir/links\n");
     }
 }
 
@@ -212,10 +214,10 @@ fn _du_hard_link(s: &str) {
 ))]
 fn _du_hard_link(s: &str) {
     // MS-WSL linux has altered expected output
-    if !uucore::os::is_wsl_1() {
-        assert_eq!(s, "16\tsubdir/links\n");
-    } else {
+    if uucore::os::is_wsl_1() {
         assert_eq!(s, "8\tsubdir/links\n");
+    } else {
+        assert_eq!(s, "16\tsubdir/links\n");
     }
 }
 
@@ -255,10 +257,10 @@ fn _du_d_flag(s: &str) {
 ))]
 fn _du_d_flag(s: &str) {
     // MS-WSL linux has altered expected output
-    if !uucore::os::is_wsl_1() {
-        assert_eq!(s, "28\t./subdir\n36\t.\n");
-    } else {
+    if uucore::os::is_wsl_1() {
         assert_eq!(s, "8\t./subdir\n8\t.\n");
+    } else {
+        assert_eq!(s, "28\t./subdir\n36\t.\n");
     }
 }
 
@@ -284,6 +286,30 @@ fn test_du_dereference() {
     _du_dereference(result.stdout_str());
 }
 
+#[cfg(not(windows))]
+#[test]
+fn test_du_dereference_args() {
+    let ts = TestScenario::new(util_name!());
+    let at = &ts.fixtures;
+
+    at.mkdir_all("subdir");
+    let mut file1 = at.make_file("subdir/file-ignore1");
+    file1.write_all(b"azeaze").unwrap();
+    let mut file2 = at.make_file("subdir/file-ignore1");
+    file2.write_all(b"amaz?ng").unwrap();
+    at.symlink_dir("subdir", "sublink");
+
+    let result = ts.ucmd().arg("-D").arg("-s").arg("sublink").succeeds();
+    let stdout = result.stdout_str();
+
+    assert!(!stdout.starts_with('0'));
+    assert!(stdout.contains("sublink"));
+
+    // Without the option
+    let result = ts.ucmd().arg("-s").arg("sublink").succeeds();
+    result.stdout_contains("0\tsublink\n");
+}
+
 #[cfg(target_vendor = "apple")]
 fn _du_dereference(s: &str) {
     assert_eq!(s, "4\tsubdir/links/deeper_dir\n16\tsubdir/links\n");
@@ -303,10 +329,46 @@ fn _du_dereference(s: &str) {
 ))]
 fn _du_dereference(s: &str) {
     // MS-WSL linux has altered expected output
-    if !uucore::os::is_wsl_1() {
-        assert_eq!(s, "8\tsubdir/links/deeper_dir\n24\tsubdir/links\n");
-    } else {
+    if uucore::os::is_wsl_1() {
         assert_eq!(s, "0\tsubdir/links/deeper_dir\n8\tsubdir/links\n");
+    } else {
+        assert_eq!(s, "8\tsubdir/links/deeper_dir\n24\tsubdir/links\n");
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "android", target_os = "freebsd")))]
+#[test]
+fn test_du_no_dereference() {
+    let ts = TestScenario::new(util_name!());
+    let at = &ts.fixtures;
+    let dir = "a_dir";
+    let symlink = "symlink";
+
+    at.mkdir(dir);
+    at.symlink_dir(dir, symlink);
+
+    for arg in ["-P", "--no-dereference"] {
+        ts.ucmd()
+            .arg(arg)
+            .succeeds()
+            .stdout_contains(dir)
+            .stdout_does_not_contain(symlink);
+
+        // ensure no-dereference "wins"
+        ts.ucmd()
+            .arg("--dereference")
+            .arg(arg)
+            .succeeds()
+            .stdout_contains(dir)
+            .stdout_does_not_contain(symlink);
+
+        // ensure dereference "wins"
+        ts.ucmd()
+            .arg(arg)
+            .arg("--dereference")
+            .succeeds()
+            .stdout_contains(symlink)
+            .stdout_does_not_contain(dir);
     }
 }
 
@@ -391,7 +453,12 @@ fn test_du_h_flag_empty_file() {
 fn test_du_time() {
     let ts = TestScenario::new(util_name!());
 
+    // du --time formats the timestamp according to the local timezone. We set the TZ
+    // environment variable to UTC in the commands below to ensure consistent outputs
+    // and test results regardless of the timezone of the machine this test runs in.
+
     ts.ccmd("touch")
+        .env("TZ", "UTC")
         .arg("-a")
         .arg("-t")
         .arg("201505150000")
@@ -399,19 +466,35 @@ fn test_du_time() {
         .succeeds();
 
     ts.ccmd("touch")
+        .env("TZ", "UTC")
         .arg("-m")
         .arg("-t")
         .arg("201606160000")
         .arg("date_test")
         .succeeds();
 
-    let result = ts.ucmd().arg("--time").arg("date_test").succeeds();
+    let result = ts
+        .ucmd()
+        .env("TZ", "UTC")
+        .arg("--time")
+        .arg("date_test")
+        .succeeds();
     result.stdout_only("0\t2016-06-16 00:00\tdate_test\n");
 
-    let result = ts.ucmd().arg("--time=atime").arg("date_test").succeeds();
+    let result = ts
+        .ucmd()
+        .env("TZ", "UTC")
+        .arg("--time=atime")
+        .arg("date_test")
+        .succeeds();
     result.stdout_only("0\t2015-05-15 00:00\tdate_test\n");
 
-    let result = ts.ucmd().arg("--time=ctime").arg("date_test").succeeds();
+    let result = ts
+        .ucmd()
+        .env("TZ", "UTC")
+        .arg("--time=ctime")
+        .arg("date_test")
+        .succeeds();
     result.stdout_only("0\t2016-06-16 00:00\tdate_test\n");
 
     if birth_supported() {
@@ -511,111 +594,81 @@ fn test_du_threshold() {
     let threshold = if cfg!(windows) { "7K" } else { "10K" };
 
     ts.ucmd()
-        .arg(format!("--threshold={}", threshold))
+        .arg(format!("--threshold={threshold}"))
         .succeeds()
         .stdout_contains("links")
         .stdout_does_not_contain("deeper_dir");
 
     ts.ucmd()
-        .arg(format!("--threshold=-{}", threshold))
+        .arg(format!("--threshold=-{threshold}"))
         .succeeds()
         .stdout_does_not_contain("links")
         .stdout_contains("deeper_dir");
 }
 
 #[test]
-fn test_du_apparent_size() {
+fn test_du_invalid_threshold() {
     let ts = TestScenario::new(util_name!());
-    let result = ts.ucmd().arg("--apparent-size").succeeds();
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let threshold = "-0";
+
+    ts.ucmd().arg(format!("--threshold={threshold}")).fails();
+}
+
+#[test]
+fn test_du_apparent_size() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.mkdir_all("a/b");
+
+    at.write("a/b/file1", "foo");
+    at.write("a/b/file2", "foobar");
+
+    let result = ucmd.args(&["--apparent-size", "--all", "a"]).succeeds();
+
+    #[cfg(not(target_os = "windows"))]
     {
-        let result_reference = unwrap_or_return!(expected_result(&ts, &["--apparent-size"]));
-        assert_eq!(result.stdout_str(), result_reference.stdout_str());
+        result.stdout_contains_line("1\ta/b/file2");
+        result.stdout_contains_line("1\ta/b/file1");
+        result.stdout_contains_line("1\ta/b");
+        result.stdout_contains_line("1\ta");
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    _du_apparent_size(result.stdout_str());
-}
-
-#[cfg(target_os = "windows")]
-fn _du_apparent_size(s: &str) {
-    assert_eq!(
-        s,
-        "1\t.\\subdir\\deeper\\deeper_dir
-1\t.\\subdir\\deeper
-6\t.\\subdir\\links
-6\t.\\subdir
-6\t.
-"
-    );
-}
-#[cfg(target_vendor = "apple")]
-fn _du_apparent_size(s: &str) {
-    assert_eq!(
-        s,
-        "1\t./subdir/deeper/deeper_dir
-1\t./subdir/deeper
-6\t./subdir/links
-6\t./subdir
-6\t.
-"
-    );
-}
-#[cfg(target_os = "freebsd")]
-fn _du_apparent_size(s: &str) {
-    assert_eq!(
-        s,
-        "1\t./subdir/deeper/deeper_dir
-2\t./subdir/deeper
-6\t./subdir/links
-8\t./subdir
-8\t.
-"
-    );
-}
-#[cfg(all(
-    not(target_vendor = "apple"),
-    not(target_os = "windows"),
-    not(target_os = "freebsd")
-))]
-fn _du_apparent_size(s: &str) {
-    assert_eq!(
-        s,
-        "5\t./subdir/deeper/deeper_dir
-9\t./subdir/deeper
-10\t./subdir/links
-22\t./subdir
-26\t.
-"
-    );
+    #[cfg(target_os = "windows")]
+    {
+        result.stdout_contains_line("1\ta\\b\\file2");
+        result.stdout_contains_line("1\ta\\b\\file1");
+        result.stdout_contains_line("1\ta\\b");
+        result.stdout_contains_line("1\ta");
+    }
 }
 
 #[test]
 fn test_du_bytes() {
-    let ts = TestScenario::new(util_name!());
-    let result = ts.ucmd().arg("--bytes").succeeds();
+    let (at, mut ucmd) = at_and_ucmd!();
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    at.mkdir_all("a/b");
+
+    at.write("a/b/file1", "foo");
+    at.write("a/b/file2", "foobar");
+
+    let result = ucmd.args(&["--bytes", "--all", "a"]).succeeds();
+
+    #[cfg(not(target_os = "windows"))]
     {
-        let result_reference = unwrap_or_return!(expected_result(&ts, &["--bytes"]));
-        assert_eq!(result.stdout_str(), result_reference.stdout_str());
+        result.stdout_contains_line("6\ta/b/file2");
+        result.stdout_contains_line("3\ta/b/file1");
+        result.stdout_contains_line("9\ta/b");
+        result.stdout_contains_line("9\ta");
     }
 
     #[cfg(target_os = "windows")]
-    result.stdout_contains("5145\t.\\subdir\n");
-    #[cfg(target_vendor = "apple")]
-    result.stdout_contains("5625\t./subdir\n");
-    #[cfg(target_os = "freebsd")]
-    result.stdout_contains("7193\t./subdir\n");
-    #[cfg(all(
-        not(target_vendor = "apple"),
-        not(target_os = "windows"),
-        not(target_os = "freebsd"),
-        not(target_os = "linux"),
-        not(target_os = "android"),
-    ))]
-    result.stdout_contains("21529\t./subdir\n");
+    {
+        result.stdout_contains_line("6\ta\\b\\file2");
+        result.stdout_contains_line("3\ta\\b\\file1");
+        result.stdout_contains_line("9\ta\\b");
+        result.stdout_contains_line("9\ta");
+    }
 }
 
 #[test]
@@ -818,4 +871,30 @@ fn test_du_exclude_invalid_syntax() {
         .arg("azerty")
         .fails()
         .stderr_contains("du: Invalid exclude syntax");
+}
+
+#[cfg(not(windows))]
+#[test]
+fn test_du_symlink_fail() {
+    let ts = TestScenario::new(util_name!());
+    let at = &ts.fixtures;
+
+    at.symlink_file("non-existing.txt", "target.txt");
+
+    ts.ucmd().arg("-L").arg("target.txt").fails().code_is(1);
+}
+
+#[cfg(not(windows))]
+#[test]
+fn test_du_symlink_multiple_fail() {
+    let ts = TestScenario::new(util_name!());
+    let at = &ts.fixtures;
+
+    at.symlink_file("non-existing.txt", "target.txt");
+    let mut file1 = at.make_file("file1");
+    file1.write_all(b"azeaze").unwrap();
+
+    let result = ts.ucmd().arg("-L").arg("target.txt").arg("file1").fails();
+    assert_eq!(result.code(), 1);
+    result.stdout_contains("4\tfile1\n");
 }

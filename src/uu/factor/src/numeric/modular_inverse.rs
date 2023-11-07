@@ -1,10 +1,7 @@
-// * This file is part of the uutils coreutils package.
-// *
-// * (c) 2015 Wiktor Kuropatwa <wiktor.kuropatwa@gmail.com>
-// * (c) 2020 nicoo            <nicoo@debian.org>
-// *
-// * For the full copyright and license information, please view the LICENSE file
-// * that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 use super::traits::Int;
 
@@ -13,7 +10,7 @@ use super::traits::Int;
 pub(crate) fn modular_inverse<T: Int>(a: T) -> T {
     let zero = T::zero();
     let one = T::one();
-    debug_assert!(a % (one + one) == one, "{:?} is not odd", a);
+    debug_assert!(a % (one + one) == one, "{a:?} is not odd");
 
     let mut t = zero;
     let mut new_t = one;
@@ -46,7 +43,6 @@ pub(crate) fn modular_inverse<T: Int>(a: T) -> T {
 #[cfg(test)]
 mod tests {
     use super::{super::traits::Int, *};
-    use crate::parametrized_check;
     use quickcheck::quickcheck;
 
     fn small_values<T: Int>() {
@@ -59,7 +55,16 @@ mod tests {
 
         assert!(test_values.all(|x| x.wrapping_mul(&modular_inverse(x)) == one));
     }
-    parametrized_check!(small_values);
+
+    #[test]
+    fn small_values_u32() {
+        small_values::<u32>();
+    }
+
+    #[test]
+    fn small_values_u64() {
+        small_values::<u64>();
+    }
 
     quickcheck! {
         fn random_values_u32(n: u32) -> bool {

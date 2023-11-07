@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Michael Gehring <mg@ebfe.org>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use clap::builder::ValueParser;
 use clap::{crate_version, Arg, Command};
 use std::ffi::OsString;
@@ -11,10 +9,10 @@ use std::fs::hard_link;
 use std::path::Path;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
-static ABOUT: &str = "Call the link function to create a link named FILE2 to an existing FILE1.";
-const USAGE: &str = "{} FILE1 FILE2";
+static ABOUT: &str = help_about!("link.md");
+const USAGE: &str = help_usage!("link.md");
 
 pub mod options {
     pub static FILES: &str = "FILES";

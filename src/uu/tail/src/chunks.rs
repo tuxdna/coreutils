@@ -1,13 +1,15 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 //! Iterating over a file by chunks, either starting at the end of the file with [`ReverseChunks`]
 //! or at the end of piped stdin with [`LinesChunk`] or [`BytesChunk`].
 //!
 //! Use [`ReverseChunks::new`] to create a new iterator over chunks of bytes from the file.
+
 // spell-checker:ignore (ToDO) filehandle BUFSIZ
+
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
@@ -46,7 +48,7 @@ pub struct ReverseChunks<'a> {
 impl<'a> ReverseChunks<'a> {
     pub fn new(file: &'a mut File) -> ReverseChunks<'a> {
         let current = if cfg!(unix) {
-            file.seek(SeekFrom::Current(0)).unwrap()
+            file.stream_position().unwrap()
         } else {
             0
         };
@@ -493,7 +495,7 @@ impl LinesChunk {
     fn calculate_bytes_offset_from(&self, offset: usize) -> usize {
         let mut lines_offset = offset;
         let mut bytes_offset = 0;
-        for byte in self.get_buffer().iter() {
+        for byte in self.get_buffer() {
             if lines_offset == 0 {
                 break;
             }
@@ -577,16 +579,16 @@ impl LinesChunkBuffer {
             }
         }
 
-        if !&self.chunks.is_empty() {
+        if self.chunks.is_empty() {
+            // chunks is empty when a file is empty so quitting early here
+            return Ok(());
+        } else {
             let length = &self.chunks.len();
             let last = &mut self.chunks[length - 1];
             if !last.get_buffer().ends_with(&[self.delimiter]) {
                 last.lines += 1;
                 self.lines += 1;
             }
-        } else {
-            // chunks is empty when a file is empty so quitting early here
-            return Ok(());
         }
 
         // skip unnecessary chunks and save the first chunk which may hold some lines we have to

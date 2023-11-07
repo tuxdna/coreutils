@@ -1,14 +1,9 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Alex Lyon <arcterus@mail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) ENOTDIR
-
-#[macro_use]
-extern crate uucore;
 
 use clap::builder::ValueParser;
 use clap::{crate_version, Arg, ArgAction, Command};
@@ -19,10 +14,10 @@ use std::path::Path;
 use uucore::display::Quotable;
 use uucore::error::{set_exit_code, strip_errno, UResult};
 
-use uucore::{format_usage, util_name};
+use uucore::{format_usage, help_about, help_usage, show_error, util_name};
 
-static ABOUT: &str = "Remove the DIRECTORY(ies), if they are empty.";
-const USAGE: &str = "{} [OPTION]... DIRECTORY...";
+static ABOUT: &str = help_about!("rmdir.md");
+const USAGE: &str = help_usage!("rmdir.md");
 static OPT_IGNORE_FAIL_NON_EMPTY: &str = "ignore-fail-on-non-empty";
 static OPT_PARENTS: &str = "parents";
 static OPT_VERBOSE: &str = "verbose";
@@ -103,7 +98,7 @@ fn remove(mut path: &Path, opts: Opts) -> Result<(), Error<'_>> {
     if opts.parents {
         while let Some(new) = path.parent() {
             path = new;
-            if path.as_os_str() == "" {
+            if path.as_os_str().is_empty() {
                 break;
             }
             remove_single(path, opts)?;

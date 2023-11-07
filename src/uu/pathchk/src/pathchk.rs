@@ -1,11 +1,8 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 #![allow(unused_must_use)] // because we of writeln!
-
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Inokentiy Babushkin <inokentiy.babushkin@googlemail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE file
-//  * that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) lstat
 use clap::{crate_version, Arg, ArgAction, Command};
@@ -13,7 +10,7 @@ use std::fs;
 use std::io::{ErrorKind, Write};
 use uucore::display::Quotable;
 use uucore::error::{set_exit_code, UResult, UUsageError};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
 // operating mode
 enum Mode {
@@ -23,8 +20,8 @@ enum Mode {
     Both,    // a combination of `Basic` and `Extra`
 }
 
-static ABOUT: &str = "Check whether file names are valid or portable";
-const USAGE: &str = "{} [OPTION]... NAME...";
+const ABOUT: &str = help_about!("pathchk.md");
+const USAGE: &str = help_usage!("pathchk.md");
 
 mod options {
     pub const POSIX: &str = "posix";
@@ -132,10 +129,7 @@ fn check_basic(path: &[String]) -> bool {
     if total_len > POSIX_PATH_MAX {
         writeln!(
             std::io::stderr(),
-            "limit {} exceeded by length {} of file name {}",
-            POSIX_PATH_MAX,
-            total_len,
-            joined_path
+            "limit {POSIX_PATH_MAX} exceeded by length {total_len} of file name {joined_path}"
         );
         return false;
     } else if total_len == 0 {
@@ -199,6 +193,17 @@ fn check_default(path: &[String]) -> bool {
         );
         return false;
     }
+    if total_len == 0 {
+        // Check whether a file name component is in a directory that is not searchable,
+        // or has some other serious problem. POSIX does not allow "" as a file name,
+        // but some non-POSIX hosts do (as an alias for "."),
+        // so allow "" if `symlink_metadata` (corresponds to `lstat`) does.
+        if fs::symlink_metadata(&joined_path).is_err() {
+            writeln!(std::io::stderr(), "pathchk: '': No such file or directory",);
+            return false;
+        }
+    }
+
     // components: length
     for p in path {
         let component_len = p.len();
@@ -226,7 +231,7 @@ fn check_searchable(path: &str) -> bool {
             if e.kind() == ErrorKind::NotFound {
                 true
             } else {
-                writeln!(std::io::stderr(), "{}", e);
+                writeln!(std::io::stderr(), "{e}");
                 false
             }
         }

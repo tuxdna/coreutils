@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Alex Lyon <arcterus@mail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) RFILE refsize rfilename fsize tsize
 use clap::{crate_version, Arg, ArgAction, Command};
@@ -14,8 +12,8 @@ use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError, UUsageError};
-use uucore::format_usage;
-use uucore::parse_size::{parse_size, ParseSizeError};
+use uucore::parse_size::{parse_size_u64, ParseSizeError};
+use uucore::{format_usage, help_about, help_section, help_usage};
 
 #[derive(Debug, Eq, PartialEq)]
 enum TruncateMode {
@@ -73,8 +71,9 @@ impl TruncateMode {
     }
 }
 
-static ABOUT: &str = "Shrink or extend the size of each file to the specified size.";
-const USAGE: &str = "{} [OPTION]... [FILE]...";
+const ABOUT: &str = help_about!("truncate.md");
+const AFTER_HELP: &str = help_section!("after help", "truncate.md");
+const USAGE: &str = help_usage!("truncate.md");
 
 pub mod options {
     pub static IO_BLOCKS: &str = "io-blocks";
@@ -84,32 +83,10 @@ pub mod options {
     pub static ARG_FILES: &str = "files";
 }
 
-fn get_long_usage() -> String {
-    String::from(
-        "
-    SIZE is an integer with an optional prefix and optional unit.
-    The available units (K, M, G, T, P, E, Z, and Y) use the following format:
-        'KB' =>           1000 (kilobytes)
-        'K'  =>           1024 (kibibytes)
-        'MB' =>      1000*1000 (megabytes)
-        'M'  =>      1024*1024 (mebibytes)
-        'GB' => 1000*1000*1000 (gigabytes)
-        'G'  => 1024*1024*1024 (gibibytes)
-    SIZE may also be prefixed by one of the following to adjust the size of each
-    file based on its current size:
-        '+'  => extend by
-        '-'  => reduce by
-        '<'  => at most
-        '>'  => at least
-        '/'  => round down to multiple of
-        '%'  => round up to multiple of",
-    )
-}
-
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app()
-        .after_help(get_long_usage())
+        .after_help(AFTER_HELP)
         .try_get_matches_from(args)
         .map_err(|e| {
             e.print().expect("Error writing clap::Error");
@@ -125,7 +102,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         .unwrap_or_default();
 
     if files.is_empty() {
-        return Err(UUsageError::new(1, "missing file operand"));
+        Err(UUsageError::new(1, "missing file operand"))
     } else {
         let io_blocks = matches.get_flag(options::IO_BLOCKS);
         let no_create = matches.get_flag(options::NO_CREATE);
@@ -231,7 +208,7 @@ fn truncate_reference_and_size(
     create: bool,
 ) -> UResult<()> {
     let mode = match parse_mode_and_size(size_string) {
-        Err(e) => return Err(USimpleError::new(1, format!("Invalid number: {}", e))),
+        Err(e) => return Err(USimpleError::new(1, format!("Invalid number: {e}"))),
         Ok(TruncateMode::Absolute(_)) => {
             return Err(USimpleError::new(
                 1,
@@ -338,7 +315,7 @@ fn truncate_reference_file_only(
 /// If at least one file is a named pipe (also known as a fifo).
 fn truncate_size_only(size_string: &str, filenames: &[String], create: bool) -> UResult<()> {
     let mode = parse_mode_and_size(size_string)
-        .map_err(|e| USimpleError::new(1, format!("Invalid number: {}", e)))?;
+        .map_err(|e| USimpleError::new(1, format!("Invalid number: {e}")))?;
     if let TruncateMode::RoundDown(0) | TruncateMode::RoundUp(0) = mode {
         return Err(USimpleError::new(1, "division by zero"));
     }
@@ -403,7 +380,7 @@ fn is_modifier(c: char) -> bool {
 
 /// Parse a size string with optional modifier symbol as its first character.
 ///
-/// A size string is as described in [`parse_size`]. The first character
+/// A size string is as described in [`parse_size_u64`]. The first character
 /// of `size_string` might be a modifier symbol, like `'+'` or
 /// `'<'`. The first element of the pair returned by this function
 /// indicates which modifier symbol was present, or
@@ -429,7 +406,7 @@ fn parse_mode_and_size(size_string: &str) -> Result<TruncateMode, ParseSizeError
         if is_modifier(c) {
             size_string = &size_string[1..];
         }
-        parse_size(size_string).map(match c {
+        parse_size_u64(size_string).map(match c {
             '+' => TruncateMode::Extend,
             '-' => TruncateMode::Reduce,
             '<' => TruncateMode::AtMost,

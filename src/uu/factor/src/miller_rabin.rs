@@ -1,9 +1,7 @@
-// * This file is part of the uutils coreutils package.
-// *
-// * (c) 2020 nicoo <nicoo@debian.org>
-// *
-// * For the full copyright and license information, please view the LICENSE file
-// * that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (URL) appspot
 
@@ -63,7 +61,7 @@ pub(crate) fn test<A: Arithmetic + Basis>(m: A) -> Result {
     let one = m.one();
     let minus_one = m.minus_one();
 
-    'witness: for _a in A::BASIS.iter() {
+    'witness: for _a in A::BASIS {
         let _a = _a % n;
         if _a == 0 {
             continue;
@@ -112,7 +110,6 @@ pub(crate) fn is_prime(n: u64) -> bool {
 mod tests {
     use super::*;
     use crate::numeric::{traits::DoubleInt, Arithmetic, Montgomery};
-    use crate::parametrized_check;
     use quickcheck::quickcheck;
     use std::iter;
     const LARGEST_U64_PRIME: u64 = 0xFFFFFFFFFFFFFFC5;
@@ -153,12 +150,20 @@ mod tests {
         for p in odd_primes() {
             assert!(
                 test(Montgomery::<A>::new(p)).is_prime(),
-                "{} reported composite",
-                p
+                "{p} reported composite"
             );
         }
     }
-    parametrized_check!(first_primes);
+
+    #[test]
+    fn first_primes_u32() {
+        first_primes::<u32>();
+    }
+
+    #[test]
+    fn first_primes_u64() {
+        first_primes::<u64>();
+    }
 
     #[test]
     fn one() {
@@ -173,7 +178,7 @@ mod tests {
     fn first_composites() {
         for (p, q) in primes().zip(odd_primes()) {
             for i in p + 1..q {
-                assert!(!is_prime(i), "{} reported prime", i);
+                assert!(!is_prime(i), "{i} reported prime");
             }
         }
     }
@@ -192,11 +197,20 @@ mod tests {
             for q in odd_primes().take_while(|q| *q <= p) {
                 let n = p * q;
                 let m = Montgomery::<A>::new(n);
-                assert!(!test(m).is_prime(), "{} = {} × {} reported prime", n, p, q);
+                assert!(!test(m).is_prime(), "{n} = {p} × {q} reported prime");
             }
         }
     }
-    parametrized_check!(small_semiprimes);
+
+    #[test]
+    fn small_semiprimes_u32() {
+        small_semiprimes::<u32>();
+    }
+
+    #[test]
+    fn small_semiprimes_u64() {
+        small_semiprimes::<u64>();
+    }
 
     quickcheck! {
         fn composites(i: u64, j: u64) -> bool {

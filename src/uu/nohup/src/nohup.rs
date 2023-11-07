@@ -1,14 +1,9 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) 2014 Vsevolod Velichko <torkvemada@sorokdva.net>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) execvp SIGHUP cproc vprocmgr cstrs homeout
-
-#[macro_use]
-extern crate uucore;
 
 use clap::{crate_version, Arg, ArgAction, Command};
 use libc::{c_char, dup2, execvp, signal};
@@ -17,23 +12,16 @@ use std::env;
 use std::ffi::CString;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::Error;
+use std::io::{Error, IsTerminal};
 use std::os::unix::prelude::*;
 use std::path::{Path, PathBuf};
 use uucore::display::Quotable;
 use uucore::error::{set_exit_code, UClapError, UError, UResult};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_section, help_usage, show_error};
 
-static ABOUT: &str = "Run COMMAND ignoring hangup signals.";
-static LONG_HELP: &str = "
-If standard input is terminal, it'll be replaced with /dev/null.
-If standard output is terminal, it'll be appended to nohup.out instead,
-or $HOME/nohup.out, if nohup.out open failed.
-If standard error is terminal, it'll be redirected to stdout.
-";
-const USAGE: &str = "\
-    {} COMMAND [ARG]...
-    {} FLAG";
+const ABOUT: &str = help_about!("nohup.md");
+const AFTER_HELP: &str = help_section!("after help", "nohup.md");
+const USAGE: &str = help_usage!("nohup.md");
 static NOHUP_OUT: &str = "nohup.out";
 // exit codes that match the GNU implementation
 static EXIT_CANCELED: i32 = 125;
@@ -68,7 +56,7 @@ impl Display for NohupError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Self::CannotDetach => write!(f, "Cannot detach from console"),
-            Self::CannotReplace(s, e) => write!(f, "Cannot replace {}: {}", s, e),
+            Self::CannotReplace(s, e) => write!(f, "Cannot replace {s}: {e}"),
             Self::OpenFailed(_, e) => {
                 write!(f, "failed to open {}: {}", NOHUP_OUT.quote(), e)
             }
@@ -118,7 +106,7 @@ pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
         .version(crate_version!())
         .about(ABOUT)
-        .after_help(LONG_HELP)
+        .after_help(AFTER_HELP)
         .override_usage(format_usage(USAGE))
         .arg(
             Arg::new(options::CMD)
@@ -132,7 +120,7 @@ pub fn uu_app() -> Command {
 }
 
 fn replace_fds() -> UResult<()> {
-    if atty::is(atty::Stream::Stdin) {
+    if std::io::stdin().is_terminal() {
         let new_stdin = File::open(Path::new("/dev/null"))
             .map_err(|e| NohupError::CannotReplace("STDIN", e))?;
         if unsafe { dup2(new_stdin.as_raw_fd(), 0) } != 0 {
@@ -140,7 +128,7 @@ fn replace_fds() -> UResult<()> {
         }
     }
 
-    if atty::is(atty::Stream::Stdout) {
+    if std::io::stdout().is_terminal() {
         let new_stdout = find_stdout()?;
         let fd = new_stdout.as_raw_fd();
 
@@ -149,7 +137,7 @@ fn replace_fds() -> UResult<()> {
         }
     }
 
-    if atty::is(atty::Stream::Stderr) && unsafe { dup2(1, 2) } != 2 {
+    if std::io::stderr().is_terminal() && unsafe { dup2(1, 2) } != 2 {
         return Err(NohupError::CannotReplace("STDERR", Error::last_os_error()).into());
     }
     Ok(())

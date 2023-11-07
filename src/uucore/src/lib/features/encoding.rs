@@ -1,7 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -67,10 +65,10 @@ pub fn encode(f: Format, input: &[u8]) -> Result<String, EncodeError> {
         Z85 => {
             // According to the spec we should not accept inputs whose len is not a multiple of 4.
             // However, the z85 crate implements a padded encoding and accepts such inputs. We have to manually check for them.
-            if input.len() % 4 != 0 {
-                return Err(EncodeError::Z85InputLenNotMultipleOf4);
-            } else {
+            if input.len() % 4 == 0 {
                 z85::encode(input)
+            } else {
+                return Err(EncodeError::Z85InputLenNotMultipleOf4);
             }
         }
     })
@@ -165,7 +163,7 @@ pub fn wrap_write<W: Write>(mut writer: W, line_wrap: usize, res: &str) -> io::R
     use std::cmp::min;
 
     if line_wrap == 0 {
-        return write!(writer, "{}", res);
+        return write!(writer, "{res}");
     }
 
     let mut start = 0;

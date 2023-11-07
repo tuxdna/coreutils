@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (ToDO) multifile curr fnames fname xfrd fillloop mockstream
 
 use std::fs::File;
@@ -6,6 +10,7 @@ use std::io::BufReader;
 use std::vec::Vec;
 
 use uucore::display::Quotable;
+use uucore::show_error;
 
 pub enum InputSource<'a> {
     FileName(&'a str),

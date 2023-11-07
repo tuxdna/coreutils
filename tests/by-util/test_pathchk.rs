@@ -1,4 +1,8 @@
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
 
 #[test]
 fn test_invalid_arg() {
@@ -15,8 +19,16 @@ fn test_default_mode() {
     // accept non-portable chars
     new_ucmd!().args(&["dir#/$file"]).succeeds().no_stdout();
 
-    // accept empty path
-    new_ucmd!().args(&[""]).succeeds().no_stdout();
+    // fail on empty path
+    new_ucmd!()
+        .args(&[""])
+        .fails()
+        .stderr_only("pathchk: '': No such file or directory\n");
+
+    new_ucmd!().args(&["", ""]).fails().stderr_only(
+        "pathchk: '': No such file or directory\n\
+        pathchk: '': No such file or directory\n",
+    );
 
     // fail on long path
     new_ucmd!()

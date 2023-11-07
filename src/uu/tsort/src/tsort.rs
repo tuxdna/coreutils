@@ -1,23 +1,18 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Ben Eggers <ben.eggers36@gmail.com>
-//  * (c) Akira Hayakawa <ruby.wktk@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use clap::{crate_version, Arg, Command};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{stdin, BufRead, BufReader, Read};
 use std::path::Path;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
-static ABOUT: &str = "Topological sort the strings in FILE.
-Strings are defined as any sequence of tokens separated by whitespace (tab, space, or newline).
-If FILE is not passed in, stdin is used instead.";
-static USAGE: &str = "{} [OPTIONS] FILE";
+const ABOUT: &str = help_about!("tsort.md");
+const USAGE: &str = help_usage!("tsort.md");
 
 mod options {
     pub const FILE: &str = "file";
@@ -76,12 +71,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     if !g.is_acyclic() {
         return Err(USimpleError::new(
             1,
-            format!("{}, input contains a loop:", input),
+            format!("{input}, input contains a loop:"),
         ));
     }
 
     for x in &g.result {
-        println!("{}", x);
+        println!("{x}");
     }
 
     Ok(())
@@ -105,8 +100,8 @@ pub fn uu_app() -> Command {
 // but using integer may improve performance.
 #[derive(Default)]
 struct Graph {
-    in_edges: HashMap<String, HashSet<String>>,
-    out_edges: HashMap<String, Vec<String>>,
+    in_edges: BTreeMap<String, BTreeSet<String>>,
+    out_edges: BTreeMap<String, Vec<String>>,
     result: Vec<String>,
 }
 
@@ -124,7 +119,7 @@ impl Graph {
     }
 
     fn init_node(&mut self, n: &str) {
-        self.in_edges.insert(n.to_string(), HashSet::new());
+        self.in_edges.insert(n.to_string(), BTreeSet::new());
         self.out_edges.insert(n.to_string(), vec![]);
     }
 
@@ -159,6 +154,7 @@ impl Graph {
             self.result.push(n.clone());
 
             let n_out_edges = self.out_edges.get_mut(&n).unwrap();
+            #[allow(clippy::explicit_iter_loop)]
             for m in n_out_edges.iter() {
                 let m_in_edges = self.in_edges.get_mut(m).unwrap();
                 m_in_edges.remove(&n);
@@ -173,11 +169,6 @@ impl Graph {
     }
 
     fn is_acyclic(&self) -> bool {
-        for edges in self.out_edges.values() {
-            if !edges.is_empty() {
-                return false;
-            }
-        }
-        true
+        self.out_edges.values().all(|edge| edge.is_empty())
     }
 }

@@ -1,31 +1,31 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Alex Lyon <arcterus@mail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) tstr sigstr cmdname setpgid sigchld getpid
 mod status;
 
-#[macro_use]
-extern crate uucore;
-
-extern crate clap;
-
 use crate::status::ExitStatus;
 use clap::{crate_version, Arg, ArgAction, Command};
 use std::io::ErrorKind;
+use std::os::unix::process::ExitStatusExt;
 use std::process::{self, Child, Stdio};
 use std::time::Duration;
 use uucore::display::Quotable;
 use uucore::error::{UClapError, UResult, USimpleError, UUsageError};
-use uucore::format_usage;
 use uucore::process::ChildExt;
-use uucore::signals::{signal_by_name_or_value, signal_name_by_value};
 
-static ABOUT: &str = "Start COMMAND, and kill it if still running after DURATION.";
-const USAGE: &str = "{} [OPTION] DURATION COMMAND...";
+#[cfg(unix)]
+use uucore::signals::enable_pipe_errors;
+
+use uucore::{
+    format_usage, help_about, help_usage, show_error,
+    signals::{signal_by_name_or_value, signal_name_by_value},
+};
+
+const ABOUT: &str = help_about!("timeout.md");
+const USAGE: &str = help_usage!("timeout.md");
 
 pub mod options {
     pub static FOREGROUND: &str = "foreground";
@@ -200,6 +200,22 @@ fn report_if_verbose(signal: usize, cmd: &str, verbose: bool) {
     }
 }
 
+fn send_signal(process: &mut Child, signal: usize, foreground: bool) {
+    // NOTE: GNU timeout doesn't check for errors of signal.
+    // The subprocess might have exited just after the timeout.
+    // Sending a signal now would return "No such process", but we should still try to kill the children.
+    _ = process.send_signal(signal);
+    if !foreground {
+        _ = process.send_signal_group(signal);
+        let kill_signal = signal_by_name_or_value("KILL").unwrap();
+        let continued_signal = signal_by_name_or_value("CONT").unwrap();
+        if signal != kill_signal && signal != continued_signal {
+            _ = process.send_signal(continued_signal);
+            _ = process.send_signal_group(continued_signal);
+        }
+    }
+}
+
 /// Wait for a child process and send a kill signal if it does not terminate.
 ///
 /// This function waits for the child `process` for the time period
@@ -221,10 +237,11 @@ fn report_if_verbose(signal: usize, cmd: &str, verbose: bool) {
 /// If there is a problem sending the `SIGKILL` signal or waiting for
 /// the process after that signal is sent.
 fn wait_or_kill_process(
-    mut process: Child,
+    process: &mut Child,
     cmd: &str,
     duration: Duration,
     preserve_status: bool,
+    foreground: bool,
     verbose: bool,
 ) -> std::io::Result<i32> {
     match process.wait_or_timeout(duration) {
@@ -238,7 +255,7 @@ fn wait_or_kill_process(
         Ok(None) => {
             let signal = signal_by_name_or_value("KILL").unwrap();
             report_if_verbose(signal, cmd, verbose);
-            process.send_signal(signal)?;
+            send_signal(process, signal, foreground);
             process.wait()?;
             Ok(ExitStatus::SignalSent(signal).into())
         }
@@ -272,21 +289,6 @@ fn preserve_signal_info(signal: libc::c_int) -> libc::c_int {
     signal
 }
 
-#[cfg(unix)]
-fn enable_pipe_errors() -> std::io::Result<()> {
-    let ret = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
-    if ret == libc::SIG_ERR {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, ""));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn enable_pipe_errors() -> std::io::Result<()> {
-    // Do nothing.
-    Ok(())
-}
-
 /// TODO: Improve exit codes, and make them consistent with the GNU Coreutils exit codes.
 
 fn timeout(
@@ -301,10 +303,10 @@ fn timeout(
     if !foreground {
         unsafe { libc::setpgid(0, 0) };
     }
-
+    #[cfg(unix)]
     enable_pipe_errors()?;
 
-    let mut process = process::Command::new(&cmd[0])
+    let process = &mut process::Command::new(&cmd[0])
         .args(&cmd[1..])
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -318,7 +320,7 @@ fn timeout(
                 // FIXME: this may not be 100% correct...
                 126
             };
-            USimpleError::new(status_code, format!("failed to execute process: {}", err))
+            USimpleError::new(status_code, format!("failed to execute process: {err}"))
         })?;
     unblock_sigchld();
     // Wait for the child process for the specified time period.
@@ -339,7 +341,7 @@ fn timeout(
             .into()),
         Ok(None) => {
             report_if_verbose(signal, &cmd[0], verbose);
-            process.send_signal(signal)?;
+            send_signal(process, signal, foreground);
             match kill_after {
                 None => {
                     if preserve_status {
@@ -354,12 +356,13 @@ fn timeout(
                         &cmd[0],
                         kill_after,
                         preserve_status,
+                        foreground,
                         verbose,
                     ) {
                         Ok(status) => Err(status.into()),
                         Err(e) => Err(USimpleError::new(
                             ExitStatus::TimeoutFailed.into(),
-                            format!("{}", e),
+                            format!("{e}"),
                         )),
                     }
                 }
@@ -367,11 +370,8 @@ fn timeout(
         }
         Err(_) => {
             // We're going to return ERR_EXIT_STATUS regardless of
-            // whether `send_signal()` succeeds or fails, so just
-            // ignore the return value.
-            process.send_signal(signal).map_err(|e| {
-                USimpleError::new(ExitStatus::TimeoutFailed.into(), format!("{}", e))
-            })?;
+            // whether `send_signal()` succeeds or fails
+            send_signal(process, signal, foreground);
             Err(ExitStatus::TimeoutFailed.into())
         }
     }

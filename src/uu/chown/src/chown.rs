@@ -1,7 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -9,8 +7,8 @@
 
 use uucore::display::Quotable;
 pub use uucore::entries::{self, Group, Locate, Passwd};
-use uucore::format_usage;
-use uucore::perms::{chown_base, options, IfFrom};
+use uucore::perms::{chown_base, options, GidUidOwnerFilter, IfFrom};
+use uucore::{format_usage, help_about, help_usage};
 
 use uucore::error::{FromIo, UResult, USimpleError};
 
@@ -19,13 +17,11 @@ use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 
-static ABOUT: &str = "change file owner and group";
+static ABOUT: &str = help_about!("chown.md");
 
-const USAGE: &str = "\
-    {} [OPTION]... [OWNER][:[GROUP]] FILE...
-    {} [OPTION]... --reference=RFILE FILE...";
+const USAGE: &str = help_usage!("chown.md");
 
-fn parse_gid_uid_and_filter(matches: &ArgMatches) -> UResult<(Option<u32>, Option<u32>, IfFrom)> {
+fn parse_gid_uid_and_filter(matches: &ArgMatches) -> UResult<GidUidOwnerFilter> {
     let filter = if let Some(spec) = matches.get_one::<String>(options::FROM) {
         match parse_spec(spec, ':')? {
             (Some(uid), None) => IfFrom::User(uid),
@@ -39,17 +35,34 @@ fn parse_gid_uid_and_filter(matches: &ArgMatches) -> UResult<(Option<u32>, Optio
 
     let dest_uid: Option<u32>;
     let dest_gid: Option<u32>;
+    let raw_owner: String;
     if let Some(file) = matches.get_one::<String>(options::REFERENCE) {
         let meta = fs::metadata(file)
             .map_err_context(|| format!("failed to get attributes of {}", file.quote()))?;
-        dest_gid = Some(meta.gid());
-        dest_uid = Some(meta.uid());
+        let gid = meta.gid();
+        let uid = meta.uid();
+        dest_gid = Some(gid);
+        dest_uid = Some(uid);
+        raw_owner = format!(
+            "{}:{}",
+            entries::uid2usr(uid).unwrap_or_else(|_| uid.to_string()),
+            entries::gid2grp(gid).unwrap_or_else(|_| gid.to_string())
+        );
     } else {
-        let (u, g) = parse_spec(matches.get_one::<String>(options::ARG_OWNER).unwrap(), ':')?;
+        raw_owner = matches
+            .get_one::<String>(options::ARG_OWNER)
+            .unwrap()
+            .into();
+        let (u, g) = parse_spec(&raw_owner, ':')?;
         dest_uid = u;
         dest_gid = g;
     }
-    Ok((dest_gid, dest_uid, filter))
+    Ok(GidUidOwnerFilter {
+        dest_gid,
+        dest_uid,
+        raw_owner,
+        filter,
+    })
 }
 
 #[uucore::main]
@@ -156,21 +169,21 @@ pub fn uu_app() -> Command {
             Arg::new(options::traverse::TRAVERSE)
                 .short(options::traverse::TRAVERSE.chars().next().unwrap())
                 .help("if a command line argument is a symbolic link to a directory, traverse it")
-                .overrides_with_all(&[options::traverse::EVERY, options::traverse::NO_TRAVERSE])
+                .overrides_with_all([options::traverse::EVERY, options::traverse::NO_TRAVERSE])
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::traverse::EVERY)
                 .short(options::traverse::EVERY.chars().next().unwrap())
                 .help("traverse every symbolic link to a directory encountered")
-                .overrides_with_all(&[options::traverse::TRAVERSE, options::traverse::NO_TRAVERSE])
+                .overrides_with_all([options::traverse::TRAVERSE, options::traverse::NO_TRAVERSE])
                 .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(options::traverse::NO_TRAVERSE)
                 .short(options::traverse::NO_TRAVERSE.chars().next().unwrap())
                 .help("do not traverse any symbolic links (default)")
-                .overrides_with_all(&[options::traverse::TRAVERSE, options::traverse::EVERY])
+                .overrides_with_all([options::traverse::TRAVERSE, options::traverse::EVERY])
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -180,6 +193,53 @@ pub fn uu_app() -> Command {
                 .help("output a diagnostic for every file processed")
                 .action(ArgAction::SetTrue),
         )
+}
+
+/// Parses the user string to extract the UID.
+fn parse_uid(user: &str, spec: &str, sep: char) -> UResult<Option<u32>> {
+    if user.is_empty() {
+        return Ok(None);
+    }
+    match Passwd::locate(user) {
+        Ok(u) => Ok(Some(u.uid)), // We have been able to get the uid
+        Err(_) => {
+            // we have NOT been able to find the uid
+            // but we could be in the case where we have user.group
+            if spec.contains('.') && !spec.contains(':') && sep == ':' {
+                // but the input contains a '.' but not a ':'
+                // we might have something like username.groupname
+                // So, try to parse it this way
+                parse_spec(spec, '.').map(|(uid, _)| uid)
+            } else {
+                // It's possible that the `user` string contains a
+                // numeric user ID, in which case, we respect that.
+                match user.parse() {
+                    Ok(uid) => Ok(Some(uid)),
+                    Err(_) => Err(USimpleError::new(
+                        1,
+                        format!("invalid user: {}", spec.quote()),
+                    )),
+                }
+            }
+        }
+    }
+}
+
+/// Parses the group string to extract the GID.
+fn parse_gid(group: &str, spec: &str) -> UResult<Option<u32>> {
+    if group.is_empty() {
+        return Ok(None);
+    }
+    match Group::locate(group) {
+        Ok(g) => Ok(Some(g.gid)),
+        Err(_) => match group.parse() {
+            Ok(gid) => Ok(Some(gid)),
+            Err(_) => Err(USimpleError::new(
+                1,
+                format!("invalid group: {}", spec.quote()),
+            )),
+        },
+    }
 }
 
 /// Parse the owner/group specifier string into a user ID and a group ID.
@@ -200,52 +260,21 @@ fn parse_spec(spec: &str, sep: char) -> UResult<(Option<u32>, Option<u32>)> {
     let user = args.next().unwrap_or("");
     let group = args.next().unwrap_or("");
 
-    let uid = if !user.is_empty() {
-        Some(match Passwd::locate(user) {
-            Ok(u) => u.uid, // We have been able to get the uid
-            Err(_) =>
-            // we have NOT been able to find the uid
-            // but we could be in the case where we have user.group
-            {
-                if spec.contains('.') && !spec.contains(':') && sep == ':' {
-                    // but the input contains a '.' but not a ':'
-                    // we might have something like username.groupname
-                    // So, try to parse it this way
-                    return parse_spec(spec, '.');
-                } else {
-                    // It's possible that the `user` string contains a
-                    // numeric user ID, in which case, we respect that.
-                    match user.parse() {
-                        Ok(uid) => uid,
-                        Err(_) => {
-                            return Err(USimpleError::new(
-                                1,
-                                format!("invalid user: {}", spec.quote()),
-                            ))
-                        }
-                    }
-                }
-            }
-        })
-    } else {
-        None
-    };
-    let gid = if !group.is_empty() {
-        Some(match Group::locate(group) {
-            Ok(g) => g.gid,
-            Err(_) => match group.parse() {
-                Ok(gid) => gid,
-                Err(_) => {
-                    return Err(USimpleError::new(
-                        1,
-                        format!("invalid group: {}", spec.quote()),
-                    ));
-                }
-            },
-        })
-    } else {
-        None
-    };
+    let uid = parse_uid(user, spec, sep)?;
+    let gid = parse_gid(group, spec)?;
+
+    if user.chars().next().map(char::is_numeric).unwrap_or(false)
+        && group.is_empty()
+        && spec != user
+    {
+        // if the arg starts with an id numeric value, the group isn't set but the separator is provided,
+        // we should fail with an error
+        return Err(USimpleError::new(
+            1,
+            format!("invalid spec: {}", spec.quote()),
+        ));
+    }
+
     Ok((uid, gid))
 }
 

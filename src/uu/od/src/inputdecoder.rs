@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 use half::f16;
 use std::io;
 
@@ -56,7 +60,7 @@ where
     I: PeekRead,
 {
     /// calls `peek_read` on the internal stream to (re)fill the buffer. Returns a
-    /// MemoryDecoder providing access to the result or returns an i/o error.
+    /// `MemoryDecoder` providing access to the result or returns an i/o error.
     pub fn peek_read(&mut self) -> io::Result<MemoryDecoder> {
         match self
             .input
@@ -81,7 +85,7 @@ impl<'a, I> HasError for InputDecoder<'a, I>
 where
     I: HasError,
 {
-    /// calls has_error on the internal stream.
+    /// calls `has_error` on the internal stream.
     fn has_error(&self) -> bool {
         self.input.has_error()
     }
@@ -136,7 +140,7 @@ impl<'a> MemoryDecoder<'a> {
             2 => u64::from(self.byte_order.read_u16(&self.data[start..start + 2])),
             4 => u64::from(self.byte_order.read_u32(&self.data[start..start + 4])),
             8 => self.byte_order.read_u64(&self.data[start..start + 8]),
-            _ => panic!("Invalid byte_size: {}", byte_size),
+            _ => panic!("Invalid byte_size: {byte_size}"),
         }
     }
 
@@ -148,7 +152,7 @@ impl<'a> MemoryDecoder<'a> {
             )),
             4 => f64::from(self.byte_order.read_f32(&self.data[start..start + 4])),
             8 => self.byte_order.read_f64(&self.data[start..start + 8]),
-            _ => panic!("Invalid byte_size: {}", byte_size),
+            _ => panic!("Invalid byte_size: {byte_size}"),
         }
     }
 }
@@ -162,6 +166,7 @@ mod tests {
 
     #[test]
     #[allow(clippy::float_cmp)]
+    #[allow(clippy::cognitive_complexity)]
     fn smoke_test() {
         let data = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0xff, 0xff];
         let mut input = PeekReader::new(Cursor::new(&data));

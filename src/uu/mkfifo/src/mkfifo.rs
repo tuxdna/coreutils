@@ -1,23 +1,17 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Michael Gehring <mg@ebfe.org>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
-
-#[macro_use]
-extern crate uucore;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 use clap::{crate_version, Arg, ArgAction, Command};
 use libc::mkfifo;
 use std::ffi::CString;
 use uucore::display::Quotable;
 use uucore::error::{UResult, USimpleError};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage, show};
 
-static NAME: &str = "mkfifo";
-static USAGE: &str = "{} [OPTION]... NAME...";
-static ABOUT: &str = "Create a FIFO with the given name.";
+static USAGE: &str = help_usage!("mkfifo.md");
+static ABOUT: &str = help_about!("mkfifo.md");
 
 mod options {
     pub static MODE: &str = "mode";
@@ -42,13 +36,13 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let mode = match matches.get_one::<String>(options::MODE) {
         Some(m) => match usize::from_str_radix(m, 8) {
             Ok(m) => m,
-            Err(e) => return Err(USimpleError::new(1, format!("invalid mode: {}", e))),
+            Err(e) => return Err(USimpleError::new(1, format!("invalid mode: {e}"))),
         },
         None => 0o666,
     };
 
     let fifos: Vec<String> = match matches.get_many::<String>(options::FIFO) {
-        Some(v) => v.clone().map(|s| s.to_owned()).collect(),
+        Some(v) => v.cloned().collect(),
         None => return Err(USimpleError::new(1, "missing operand")),
     };
 
@@ -70,7 +64,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
-        .name(NAME)
         .version(crate_version!())
         .override_usage(format_usage(USAGE))
         .about(ABOUT)

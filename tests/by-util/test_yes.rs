@@ -1,30 +1,36 @@
-use std::io::Read;
-use std::process::ExitStatus;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use std::ffi::OsStr;
+use std::process::{ExitStatus, Stdio};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
-use crate::common::util::*;
+use crate::common::util::TestScenario;
 
 #[cfg(unix)]
-fn check_termination(result: &ExitStatus) {
-    assert_eq!(result.signal(), Some(libc::SIGPIPE as i32));
+fn check_termination(result: ExitStatus) {
+    assert_eq!(result.signal(), Some(libc::SIGPIPE));
 }
 
 #[cfg(not(unix))]
-fn check_termination(result: &ExitStatus) {
+fn check_termination(result: ExitStatus) {
     assert!(result.success(), "yes did not exit successfully");
 }
 
+const NO_ARGS: &[&str] = &[];
+
 /// Run `yes`, capture some of the output, close the pipe, and verify it.
-fn run(args: &[&str], expected: &[u8]) {
+fn run(args: &[impl AsRef<OsStr>], expected: &[u8]) {
     let mut cmd = new_ucmd!();
-    let mut child = cmd.args(args).run_no_wait();
-    let mut stdout = child.stdout.take().unwrap();
-    let mut buf = vec![0; expected.len()];
-    stdout.read_exact(&mut buf).unwrap();
-    drop(stdout);
-    check_termination(&child.wait().unwrap());
+    let mut child = cmd.args(args).set_stdout(Stdio::piped()).run_no_wait();
+    let buf = child.stdout_exact_bytes(expected.len());
+    child.close_stdout();
+
+    #[allow(deprecated)]
+    check_termination(child.wait_with_output().unwrap().status);
     assert_eq!(buf.as_slice(), expected);
 }
 
@@ -34,8 +40,13 @@ fn test_invalid_arg() {
 }
 
 #[test]
+fn test_version() {
+    new_ucmd!().arg("--version").succeeds();
+}
+
+#[test]
 fn test_simple() {
-    run(&[], b"y\ny\ny\ny\n");
+    run(NO_ARGS, b"y\ny\ny\ny\n");
 }
 
 #[test]
@@ -45,7 +56,7 @@ fn test_args() {
 
 #[test]
 fn test_long_output() {
-    run(&[], "y\n".repeat(512 * 1024).as_bytes());
+    run(NO_ARGS, "y\n".repeat(512 * 1024).as_bytes());
 }
 
 /// Test with an output that seems likely to get mangled in case of incomplete writes.
@@ -88,4 +99,21 @@ fn test_piped_to_dev_full() {
                 .stderr_contains("No space left on device");
         }
     }
+}
+
+#[test]
+#[cfg(any(unix, target_os = "wasi"))]
+fn test_non_utf8() {
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
+
+    run(
+        &[
+            OsStr::from_bytes(b"\xbf\xff\xee"),
+            OsStr::from_bytes(b"bar"),
+        ],
+        &b"\xbf\xff\xee bar\n".repeat(5000),
+    );
 }

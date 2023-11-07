@@ -1,4 +1,8 @@
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
 
 #[test]
 fn test_invalid_arg() {
@@ -7,7 +11,7 @@ fn test_invalid_arg() {
 
 #[test]
 fn test_create_fifo_missing_operand() {
-    new_ucmd!().fails().stderr_is("mkfifo: missing operand");
+    new_ucmd!().fails().stderr_is("mkfifo: missing operand\n");
 }
 
 #[test]
@@ -46,5 +50,5 @@ fn test_create_one_fifo_already_exists() {
         .arg("abcdef")
         .arg("abcdef")
         .fails()
-        .stderr_is("mkfifo: cannot create fifo 'abcdef': File exists");
+        .stderr_is("mkfifo: cannot create fifo 'abcdef': File exists\n");
 }

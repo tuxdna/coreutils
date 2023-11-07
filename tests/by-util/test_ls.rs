@@ -1,16 +1,20 @@
-// spell-checker:ignore (words) READMECAREFULLY birthtime doesntexist oneline somebackup lrwx somefile somegroup somehiddenbackup somehiddenfile tabsize aaaaaaaa bbbb cccc dddddddd ncccc
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+// spell-checker:ignore (words) READMECAREFULLY birthtime doesntexist oneline somebackup lrwx somefile somegroup somehiddenbackup somehiddenfile tabsize aaaaaaaa bbbb cccc dddddddd ncccc neee naaaaa nbcdef nfffff dired subdired tmpfs
 
-#[cfg(not(windows))]
-extern crate libc;
-extern crate regex;
-#[cfg(not(windows))]
-extern crate tempfile;
-
-use self::regex::Regex;
-use crate::common::util::*;
+#[cfg(any(unix, feature = "feat_selinux"))]
+use crate::common::util::expected_result;
+use crate::common::util::TestScenario;
 #[cfg(all(unix, feature = "chmod"))]
 use nix::unistd::{close, dup};
+use regex::Regex;
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
+use std::ffi::OsStr;
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::OsStrExt;
 #[cfg(all(unix, feature = "chmod"))]
 use std::os::unix::io::IntoRawFd;
 use std::path::Path;
@@ -22,7 +26,6 @@ use std::time::Duration;
 const LONG_ARGS: &[&str] = &[
     "-l",
     "--long",
-    "--l",
     "--format=long",
     "--for=long",
     "--format=verbose",
@@ -435,44 +438,43 @@ fn test_ls_io_errors() {
 
         // on the mac and in certain Linux containers bad fds are typed as dirs,
         // however sometimes bad fds are typed as links and directory entry on links won't fail
-        if PathBuf::from(format!("/dev/fd/{fd}", fd = fd2)).is_dir() {
+        if PathBuf::from(format!("/dev/fd/{fd2}")).is_dir() {
             scene
                 .ucmd()
                 .arg("-alR")
-                .arg(format!("/dev/fd/{fd}", fd = fd2))
+                .arg(format!("/dev/fd/{fd2}"))
                 .fails()
                 .stderr_contains(format!(
-                    "cannot open directory '/dev/fd/{fd}': Bad file descriptor",
-                    fd = fd2
+                    "cannot open directory '/dev/fd/{fd2}': Bad file descriptor"
                 ))
-                .stdout_does_not_contain(format!("{fd}:\n", fd = fd2));
+                .stdout_does_not_contain(format!("{fd2}:\n"));
 
             scene
                 .ucmd()
                 .arg("-RiL")
-                .arg(format!("/dev/fd/{fd}", fd = fd2))
+                .arg(format!("/dev/fd/{fd2}"))
                 .fails()
-                .stderr_contains(format!("cannot open directory '/dev/fd/{fd}': Bad file descriptor", fd = fd2))
+                .stderr_contains(format!("cannot open directory '/dev/fd/{fd2}': Bad file descriptor"))
                 // don't double print bad fd errors
-                .stderr_does_not_contain(format!("ls: cannot open directory '/dev/fd/{fd}': Bad file descriptor\nls: cannot open directory '/dev/fd/{fd}': Bad file descriptor", fd = fd2));
+                .stderr_does_not_contain(format!("ls: cannot open directory '/dev/fd/{fd2}': Bad file descriptor\nls: cannot open directory '/dev/fd/{fd2}': Bad file descriptor"));
         } else {
             scene
                 .ucmd()
                 .arg("-alR")
-                .arg(format!("/dev/fd/{fd}", fd = fd2))
+                .arg(format!("/dev/fd/{fd2}"))
                 .succeeds();
 
             scene
                 .ucmd()
                 .arg("-RiL")
-                .arg(format!("/dev/fd/{fd}", fd = fd2))
+                .arg(format!("/dev/fd/{fd2}"))
                 .succeeds();
         }
 
         scene
             .ucmd()
             .arg("-alL")
-            .arg(format!("/dev/fd/{fd}", fd = fd2))
+            .arg(format!("/dev/fd/{fd2}"))
             .succeeds();
 
         let _ = close(fd2);
@@ -610,10 +612,10 @@ fn test_ls_a() {
 fn test_ls_width() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
-    at.touch(&at.plus_as_string("test-width-1"));
-    at.touch(&at.plus_as_string("test-width-2"));
-    at.touch(&at.plus_as_string("test-width-3"));
-    at.touch(&at.plus_as_string("test-width-4"));
+    at.touch(at.plus_as_string("test-width-1"));
+    at.touch(at.plus_as_string("test-width-2"));
+    at.touch(at.plus_as_string("test-width-3"));
+    at.touch(at.plus_as_string("test-width-4"));
 
     for option in [
         "-w 100",
@@ -672,6 +674,23 @@ fn test_ls_width() {
             .stdout_only("test-width-1  test-width-3\ntest-width-2  test-width-4\n");
     }
 
+    for option in [
+        "-w 100000000000000",
+        "-w=100000000000000",
+        "--width=100000000000000",
+        "--width 100000000000000",
+        "-w 07777777777777777777",
+        "-w=07777777777777777777",
+        "--width=07777777777777777777",
+        "--width 07777777777777777777",
+    ] {
+        scene
+            .ucmd()
+            .args(&option.split(' ').collect::<Vec<_>>())
+            .arg("-C")
+            .succeeds()
+            .stdout_only("test-width-1  test-width-2  test-width-3  test-width-4\n");
+    }
     scene
         .ucmd()
         .arg("-w=bad")
@@ -685,7 +704,7 @@ fn test_ls_width() {
             .args(&option.split(' ').collect::<Vec<_>>())
             .arg("-C")
             .fails()
-            .stderr_only("ls: invalid line width: '1a'");
+            .stderr_only("ls: invalid line width: '1a'\n");
     }
 }
 
@@ -693,10 +712,10 @@ fn test_ls_width() {
 fn test_ls_columns() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
-    at.touch(&at.plus_as_string("test-columns-1"));
-    at.touch(&at.plus_as_string("test-columns-2"));
-    at.touch(&at.plus_as_string("test-columns-3"));
-    at.touch(&at.plus_as_string("test-columns-4"));
+    at.touch(at.plus_as_string("test-columns-1"));
+    at.touch(at.plus_as_string("test-columns-2"));
+    at.touch(at.plus_as_string("test-columns-3"));
+    at.touch(at.plus_as_string("test-columns-4"));
 
     // Columns is the default
     let result = scene.ucmd().succeeds();
@@ -736,7 +755,7 @@ fn test_ls_columns() {
             .arg("-C")
             .succeeds()
             .stdout_is("test-columns-1  test-columns-2  test-columns-3  test-columns-4\n")
-            .stderr_is("ls: ignoring invalid width in environment variable COLUMNS: 'garbage'");
+            .stderr_is("ls: ignoring invalid width in environment variable COLUMNS: 'garbage'\n");
     }
     scene
         .ucmd()
@@ -754,10 +773,10 @@ fn test_ls_columns() {
 fn test_ls_across() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
-    at.touch(&at.plus_as_string("test-across-1"));
-    at.touch(&at.plus_as_string("test-across-2"));
-    at.touch(&at.plus_as_string("test-across-3"));
-    at.touch(&at.plus_as_string("test-across-4"));
+    at.touch(at.plus_as_string("test-across-1"));
+    at.touch(at.plus_as_string("test-across-2"));
+    at.touch(at.plus_as_string("test-across-3"));
+    at.touch(at.plus_as_string("test-across-4"));
 
     for option in ACROSS_ARGS {
         let result = scene.ucmd().arg(option).succeeds();
@@ -782,10 +801,10 @@ fn test_ls_across() {
 fn test_ls_commas() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
-    at.touch(&at.plus_as_string("test-commas-1"));
-    at.touch(&at.plus_as_string("test-commas-2"));
-    at.touch(&at.plus_as_string("test-commas-3"));
-    at.touch(&at.plus_as_string("test-commas-4"));
+    at.touch(at.plus_as_string("test-commas-1"));
+    at.touch(at.plus_as_string("test-commas-2"));
+    at.touch(at.plus_as_string("test-commas-3"));
+    at.touch(at.plus_as_string("test-commas-4"));
 
     for option in COMMA_ARGS {
         let result = scene.ucmd().arg(option).succeeds();
@@ -815,8 +834,8 @@ fn test_ls_zero() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
     at.mkdir("0-test-zero");
-    at.touch(&at.plus_as_string("2-test-zero"));
-    at.touch(&at.plus_as_string("3-test-zero"));
+    at.touch(at.plus_as_string("2-test-zero"));
+    at.touch(at.plus_as_string("3-test-zero"));
 
     let ignored_opts = [
         "--quoting-style=c",
@@ -871,7 +890,7 @@ fn test_ls_zero() {
 
     #[cfg(unix)]
     {
-        at.touch(&at.plus_as_string("1\ntest-zero"));
+        at.touch(at.plus_as_string("1\ntest-zero"));
 
         let ignored_opts = [
             "--quoting-style=c",
@@ -934,9 +953,9 @@ fn test_ls_zero() {
 fn test_ls_commas_trailing() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
-    at.touch(&at.plus_as_string("test-commas-trailing-2"));
+    at.touch(at.plus_as_string("test-commas-trailing-2"));
 
-    at.touch(&at.plus_as_string("test-commas-trailing-1"));
+    at.touch(at.plus_as_string("test-commas-trailing-1"));
     at.append(
         "test-commas-trailing-1",
         &(0..2000)
@@ -951,14 +970,14 @@ fn test_ls_commas_trailing() {
         .arg("./test-commas-trailing-1")
         .arg("./test-commas-trailing-2")
         .succeeds()
-        .stdout_matches(&Regex::new(r"\S$").unwrap()); // matches if there is no whitespace at the end of stdout.
+        .stdout_matches(&Regex::new(r"\S\n$").unwrap());
 }
 
 #[test]
 fn test_ls_long() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
-    at.touch(&at.plus_as_string("test-long"));
+    at.touch(at.plus_as_string("test-long"));
 
     for arg in LONG_ARGS {
         let result = scene.ucmd().arg(arg).arg("test-long").succeeds();
@@ -966,7 +985,7 @@ fn test_ls_long() {
         result.stdout_matches(&Regex::new(r"[-bcCdDlMnpPsStTx?]([r-][w-][xt-]){3}.*").unwrap());
 
         #[cfg(windows)]
-        result.stdout_contains("---------- 1 somebody somegroup");
+        result.stdout_matches(&Regex::new(r"[-dl](r[w-]x){3}.*").unwrap());
     }
 }
 
@@ -976,7 +995,7 @@ fn test_ls_long_format() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
     at.mkdir(&at.plus_as_string("test-long-dir"));
-    at.touch(&at.plus_as_string("test-long-dir/test-long-file"));
+    at.touch(at.plus_as_string("test-long-dir/test-long-file"));
     at.mkdir(&at.plus_as_string("test-long-dir/test-long-dir"));
 
     for arg in LONG_ARGS {
@@ -1174,7 +1193,7 @@ fn test_ls_long_symlink_color() {
                 captures.get(1).unwrap().as_str().to_string(),
                 captures.get(2).unwrap().as_str().to_string(),
             ),
-            None => ("".to_string(), input.to_string()),
+            None => (String::new(), input.to_string()),
         }
     }
 
@@ -1232,9 +1251,9 @@ fn test_ls_long_symlink_color() {
 fn test_ls_long_total_size() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
-    at.touch(&at.plus_as_string("test-long"));
+    at.touch(at.plus_as_string("test-long"));
     at.append("test-long", "1");
-    at.touch(&at.plus_as_string("test-long2"));
+    at.touch(at.plus_as_string("test-long2"));
     at.append("test-long2", "2");
 
     let expected_prints: HashMap<_, _> = if cfg!(unix) {
@@ -1244,7 +1263,7 @@ fn test_ls_long_total_size() {
             ("long_si", "total 8.2k"),
         ]
         .iter()
-        .cloned()
+        .copied()
         .collect()
     } else {
         [
@@ -1253,7 +1272,7 @@ fn test_ls_long_total_size() {
             ("long_si", "total 2"),
         ]
         .iter()
-        .cloned()
+        .copied()
         .collect()
     };
 
@@ -1276,12 +1295,12 @@ fn test_ls_long_total_size() {
 fn test_ls_long_formats() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
-    at.touch(&at.plus_as_string("test-long-formats"));
+    at.touch(at.plus_as_string("test-long-formats"));
 
     // Zero or one "." for indicating a file with security context
 
     // Regex for three names, so all of author, group and owner
-    let re_three = Regex::new(r"[xrw-]{9}\.? \d ([-0-9_a-z]+ ){3}0").unwrap();
+    let re_three = Regex::new(r"[xrw-]{9}\.? \d ([-0-9_a-z.A-Z]+ ){3}0").unwrap();
 
     #[cfg(unix)]
     let re_three_num = Regex::new(r"[xrw-]{9}\.? \d (\d+ ){3}0").unwrap();
@@ -1290,13 +1309,13 @@ fn test_ls_long_formats() {
     // - group and owner
     // - author and owner
     // - author and group
-    let re_two = Regex::new(r"[xrw-]{9}\.? \d ([-0-9_a-z]+ ){2}0").unwrap();
+    let re_two = Regex::new(r"[xrw-]{9}\.? \d ([-0-9_a-z.A-Z]+ ){2}0").unwrap();
 
     #[cfg(unix)]
     let re_two_num = Regex::new(r"[xrw-]{9}\.? \d (\d+ ){2}0").unwrap();
 
     // Regex for one name: author, group or owner
-    let re_one = Regex::new(r"[xrw-]{9}\.? \d [-0-9_a-z]+ 0").unwrap();
+    let re_one = Regex::new(r"[xrw-]{9}\.? \d [-0-9_a-z.A-Z]+ 0").unwrap();
 
     #[cfg(unix)]
     let re_one_num = Regex::new(r"[xrw-]{9}\.? \d \d+ 0").unwrap();
@@ -1423,8 +1442,8 @@ fn test_ls_long_formats() {
 fn test_ls_oneline() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
-    at.touch(&at.plus_as_string("test-oneline-1"));
-    at.touch(&at.plus_as_string("test-oneline-2"));
+    at.touch(at.plus_as_string("test-oneline-1"));
+    at.touch(at.plus_as_string("test-oneline-2"));
 
     // Bit of a weird situation: in the tests oneline and columns have the same output,
     // except on Windows.
@@ -1444,7 +1463,7 @@ fn test_ls_deref() {
     let path_regexp = r"(.*)test-long.link -> (.*)test-long(.*)";
     let re = Regex::new(path_regexp).unwrap();
 
-    at.touch(&at.plus_as_string("test-long"));
+    at.touch(at.plus_as_string("test-long"));
     at.symlink_file("test-long", "test-long.link");
     assert!(at.is_symlink("test-long.link"));
 
@@ -1566,6 +1585,28 @@ fn test_ls_sort_name() {
 }
 
 #[test]
+fn test_ls_sort_width() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.touch("aaaaa");
+    at.touch("bbb");
+    at.touch("cccc");
+    at.touch("eee");
+    at.touch("d");
+    at.touch("fffff");
+    at.touch("abc");
+    at.touch("zz");
+    at.touch("bcdef");
+
+    scene
+        .ucmd()
+        .arg("--sort=width")
+        .succeeds()
+        .stdout_is("d\nzz\nabc\nbbb\neee\ncccc\naaaaa\nbcdef\nfffff\n");
+}
+
+#[test]
 fn test_ls_order_size() {
     let scene = TestScenario::new(util_name!());
     let at = &scene.fixtures;
@@ -1645,88 +1686,108 @@ fn test_ls_styles() {
     at.touch("test");
 
     let re_full = Regex::new(
-        r"[a-z-]* \d* \w* \w* \d* \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d* (\+|\-)\d{4} test\n",
+        r"[a-z-]* \d* [\w.]* [\w.]* \d* \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d* (\+|\-)\d{4} test\n",
     )
     .unwrap();
     let re_long =
-        Regex::new(r"[a-z-]* \d* \w* \w* \d* \d{4}-\d{2}-\d{2} \d{2}:\d{2} test\n").unwrap();
-    let re_iso = Regex::new(r"[a-z-]* \d* \w* \w* \d* \d{2}-\d{2} \d{2}:\d{2} test\n").unwrap();
+        Regex::new(r"[a-z-]* \d* [\w.]* [\w.]* \d* \d{4}-\d{2}-\d{2} \d{2}:\d{2} test\n").unwrap();
+    let re_iso =
+        Regex::new(r"[a-z-]* \d* [\w.]* [\w.]* \d* \d{2}-\d{2} \d{2}:\d{2} test\n").unwrap();
     let re_locale =
-        Regex::new(r"[a-z-]* \d* \w* \w* \d* [A-Z][a-z]{2} ( |\d)\d \d{2}:\d{2} test\n").unwrap();
-    let re_custom_format = Regex::new(r"[a-z-]* \d* \w* \w* \d* \d{4}__\d{2} test\n").unwrap();
+        Regex::new(r"[a-z-]* \d* [\w.]* [\w.]* \d* [A-Z][a-z]{2} ( |\d)\d \d{2}:\d{2} test\n")
+            .unwrap();
+    let re_custom_format =
+        Regex::new(r"[a-z-]* \d* [\w.]* [\w.]* \d* \d{4}__\d{2} test\n").unwrap();
 
     //full-iso
-    let result = scene
+    scene
         .ucmd()
         .arg("-l")
         .arg("--time-style=full-iso")
-        .succeeds();
-    assert!(re_full.is_match(result.stdout_str()));
+        .succeeds()
+        .stdout_matches(&re_full);
     //long-iso
-    let result = scene
+    scene
         .ucmd()
         .arg("-l")
         .arg("--time-style=long-iso")
-        .succeeds();
-    assert!(re_long.is_match(result.stdout_str()));
+        .succeeds()
+        .stdout_matches(&re_long);
     //iso
-    let result = scene.ucmd().arg("-l").arg("--time-style=iso").succeeds();
-    assert!(re_iso.is_match(result.stdout_str()));
+    scene
+        .ucmd()
+        .arg("-l")
+        .arg("--time-style=iso")
+        .succeeds()
+        .stdout_matches(&re_iso);
     //locale
-    let result = scene.ucmd().arg("-l").arg("--time-style=locale").succeeds();
-    assert!(re_locale.is_match(result.stdout_str()));
+    scene
+        .ucmd()
+        .arg("-l")
+        .arg("--time-style=locale")
+        .succeeds()
+        .stdout_matches(&re_locale);
 
     //+FORMAT
-    let result = scene
+    scene
         .ucmd()
         .arg("-l")
         .arg("--time-style=+%Y__%M")
-        .succeeds();
-    assert!(re_custom_format.is_match(result.stdout_str()));
+        .succeeds()
+        .stdout_matches(&re_custom_format);
 
     // Also fails due to not having full clap support for time_styles
-    scene.ucmd().arg("-l").arg("-time-style=invalid").fails();
+    scene
+        .ucmd()
+        .arg("-l")
+        .arg("--time-style=invalid")
+        .fails()
+        .code_is(2);
 
     //Overwrite options tests
-    let result = scene
+    scene
         .ucmd()
         .arg("-l")
         .arg("--time-style=long-iso")
         .arg("--time-style=iso")
-        .succeeds();
-    assert!(re_iso.is_match(result.stdout_str()));
-    let result = scene
+        .succeeds()
+        .stdout_matches(&re_iso);
+    scene
         .ucmd()
         .arg("--time-style=iso")
         .arg("--full-time")
-        .succeeds();
-    assert!(re_full.is_match(result.stdout_str()));
-    let result = scene
+        .succeeds()
+        .stdout_matches(&re_full);
+    scene
         .ucmd()
         .arg("--full-time")
         .arg("--time-style=iso")
-        .succeeds();
-    assert!(re_iso.is_match(result.stdout_str()));
+        .succeeds()
+        .stdout_matches(&re_iso);
 
-    let result = scene
+    scene
         .ucmd()
         .arg("--full-time")
         .arg("--time-style=iso")
         .arg("--full-time")
-        .succeeds();
-    assert!(re_full.is_match(result.stdout_str()));
+        .succeeds()
+        .stdout_matches(&re_full);
 
-    let result = scene
+    scene
         .ucmd()
         .arg("--full-time")
         .arg("-x")
         .arg("-l")
-        .succeeds();
-    assert!(re_full.is_match(result.stdout_str()));
+        .succeeds()
+        .stdout_matches(&re_full);
 
     at.touch("test2");
-    let result = scene.ucmd().arg("--full-time").arg("-x").succeeds();
-    assert_eq!(result.stdout_str(), "test  test2\n");
+    scene
+        .ucmd()
+        .arg("--full-time")
+        .arg("-x")
+        .succeeds()
+        .stdout_is("test  test2\n");
 }
 
 #[test]
@@ -1781,9 +1842,15 @@ fn test_ls_order_time() {
         at.open("test-4").metadata().unwrap().accessed().unwrap();
 
         // It seems to be dependent on the platform whether the access time is actually set
-        #[cfg(all(unix, not(target_os = "android")))]
-        result.stdout_only("test-3\ntest-4\ntest-2\ntest-1\n");
-        #[cfg(any(windows, target_os = "android"))]
+        #[cfg(unix)]
+        {
+            let expected = unwrap_or_return!(expected_result(&scene, &["-t", arg]));
+            at.open("test-3").metadata().unwrap().accessed().unwrap();
+            at.open("test-4").metadata().unwrap().accessed().unwrap();
+
+            result.stdout_only(expected.stdout_str());
+        }
+        #[cfg(windows)]
         result.stdout_only("test-4\ntest-3\ntest-2\ntest-1\n");
     }
 
@@ -1809,8 +1876,8 @@ fn test_ls_files_dirs() {
     at.mkdir("a/b");
     at.mkdir("a/b/c");
     at.mkdir("z");
-    at.touch(&at.plus_as_string("a/a"));
-    at.touch(&at.plus_as_string("a/b/b"));
+    at.touch(at.plus_as_string("a/a"));
+    at.touch(at.plus_as_string("a/b/b"));
 
     scene.ucmd().arg("a").succeeds();
     scene.ucmd().arg("a/a").succeeds();
@@ -1841,8 +1908,8 @@ fn test_ls_recursive() {
     at.mkdir("a/b");
     at.mkdir("a/b/c");
     at.mkdir("z");
-    at.touch(&at.plus_as_string("a/a"));
-    at.touch(&at.plus_as_string("a/b/b"));
+    at.touch(at.plus_as_string("a/a"));
+    at.touch(at.plus_as_string("a/b/b"));
 
     scene.ucmd().arg("a").succeeds();
     scene.ucmd().arg("a/a").succeeds();
@@ -1863,7 +1930,36 @@ fn test_ls_recursive() {
     #[cfg(not(windows))]
     result.stdout_contains("a/b:\nb");
     #[cfg(windows)]
-    result.stdout_contains(&"a\\b:\nb");
+    result.stdout_contains("a\\b:\nb");
+}
+
+#[test]
+fn test_ls_recursive_1() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    at.mkdir("x");
+    at.mkdir("y");
+    at.mkdir("a");
+    at.mkdir("b");
+    at.mkdir("c");
+    at.mkdir("a/1");
+    at.mkdir("a/2");
+    at.mkdir("a/3");
+    at.touch("f");
+    at.touch("a/1/I");
+    at.touch("a/1/II");
+    #[cfg(unix)]
+    let out = "a:\n1\n2\n3\n\na/1:\nI\nII\n\na/2:\n\na/3:\n\nb:\n\nc:\n";
+    #[cfg(windows)]
+    let out = "a:\n1\n2\n3\n\na\\1:\nI\nII\n\na\\2:\n\na\\3:\n\nb:\n\nc:\n";
+    scene
+        .ucmd()
+        .arg("-R1")
+        .arg("a")
+        .arg("b")
+        .arg("c")
+        .succeeds()
+        .stdout_is(out);
 }
 
 #[test]
@@ -1881,7 +1977,7 @@ fn test_ls_color() {
         .join("nested_file")
         .to_string_lossy()
         .to_string();
-    at.touch(&nested_file);
+    at.touch(nested_file);
     at.touch("test-color");
 
     let a_with_colors = "\x1b[1;34ma\x1b[0m";
@@ -1932,10 +2028,7 @@ fn test_ls_color() {
         .arg("-w=15")
         .arg("-C")
         .succeeds()
-        .stdout_only(format!(
-            "{}  test-color\nb  {}\n",
-            a_with_colors, z_with_colors
-        ));
+        .stdout_only(format!("{a_with_colors}  test-color\nb  {z_with_colors}\n"));
 }
 
 #[cfg(unix)]
@@ -1989,7 +2082,7 @@ fn test_ls_indicator_style() {
     at.mkdir("directory");
     assert!(at.dir_exists("directory"));
 
-    at.touch(&at.plus_as_string("link-src"));
+    at.touch(at.plus_as_string("link-src"));
     at.symlink_file("link-src", "link-dest.link");
     assert!(at.is_symlink("link-dest.link"));
 
@@ -2041,7 +2134,7 @@ fn test_ls_indicator_style() {
         // Verify that classify and file-type both contain indicators for symlinks.
         scene
             .ucmd()
-            .arg(format!("--indicator-style={}", opt))
+            .arg(format!("--indicator-style={opt}"))
             .succeeds()
             .stdout_contains("@")
             .stdout_contains("|");
@@ -2057,7 +2150,7 @@ fn test_ls_indicator_style() {
             .tempdir()
             .expect("failed to create dir");
         let socket_path = dir.path().join("sock");
-        let _listener = UnixListener::bind(&socket_path).expect("failed to create socket");
+        let _listener = UnixListener::bind(socket_path).expect("failed to create socket");
 
         new_ucmd!()
             .args(&[
@@ -2081,7 +2174,7 @@ fn test_ls_indicator_style() {
     at.mkdir("directory");
     assert!(at.dir_exists("directory"));
 
-    at.touch(&at.plus_as_string("link-src"));
+    at.touch(at.plus_as_string("link-src"));
     at.symlink_file("link-src", "link-dest.link");
     assert!(at.is_symlink("link-dest.link"));
 
@@ -2091,15 +2184,15 @@ fn test_ls_indicator_style() {
         // Verify that classify and file-type both contain indicators for symlinks.
         scene
             .ucmd()
-            .arg(format!("--indicator-style={}", opt))
+            .arg(format!("--indicator-style={opt}"))
             .succeeds()
-            .stdout_contains(&"/");
+            .stdout_contains("/");
     }
 
     // Same test as above, but with the alternate flags.
     let options = vec!["--classify", "--file-type", "-p"];
     for opt in options {
-        scene.ucmd().arg(opt).succeeds().stdout_contains(&"/");
+        scene.ucmd().arg(opt).succeeds().stdout_contains("/");
     }
 
     // Classify and File-Type all contain indicators for pipes and links.
@@ -2108,9 +2201,9 @@ fn test_ls_indicator_style() {
         // Verify that classify and file-type both contain indicators for symlinks.
         scene
             .ucmd()
-            .arg(format!("--indicator-style={}", opt))
+            .arg(format!("--indicator-style={opt}"))
             .succeeds()
-            .stdout_contains(&"@");
+            .stdout_contains("@");
     }
 }
 
@@ -2372,6 +2465,7 @@ fn test_ls_quoting_style() {
             ("--quoting-style=literal", "one?two"),
             ("-N", "one?two"),
             ("--literal", "one?two"),
+            ("--l", "one?two"),
             ("--quoting-style=c", "\"one\\ntwo\""),
             ("-Q", "\"one\\ntwo\""),
             ("--quote-name", "\"one\\ntwo\""),
@@ -2389,13 +2483,14 @@ fn test_ls_quoting_style() {
                 .arg(arg)
                 .arg("one\ntwo")
                 .succeeds()
-                .stdout_only(format!("{}\n", correct));
+                .stdout_only(format!("{correct}\n"));
         }
 
         for (arg, correct) in [
             ("--quoting-style=literal", "one\ntwo"),
             ("-N", "one\ntwo"),
             ("--literal", "one\ntwo"),
+            ("--l", "one\ntwo"),
             ("--quoting-style=shell", "one\ntwo"), // FIXME: GNU ls quotes this case
             ("--quoting-style=shell-always", "'one\ntwo'"),
         ] {
@@ -2405,7 +2500,7 @@ fn test_ls_quoting_style() {
                 .arg("--show-control-chars")
                 .arg("one\ntwo")
                 .succeeds()
-                .stdout_only(format!("{}\n", correct));
+                .stdout_only(format!("{correct}\n"));
         }
 
         for (arg, correct) in [
@@ -2427,7 +2522,7 @@ fn test_ls_quoting_style() {
                 .arg(arg)
                 .arg("one\\two")
                 .succeeds()
-                .stdout_only(format!("{}\n", correct));
+                .stdout_only(format!("{correct}\n"));
         }
 
         // Tests for a character that forces quotation in shell-style escaping
@@ -2443,7 +2538,7 @@ fn test_ls_quoting_style() {
                 .arg(arg)
                 .arg("one\n&two")
                 .succeeds()
-                .stdout_only(format!("{}\n", correct));
+                .stdout_only(format!("{correct}\n"));
         }
     }
 
@@ -2457,6 +2552,7 @@ fn test_ls_quoting_style() {
         ("--quoting-style=literal", "one two"),
         ("-N", "one two"),
         ("--literal", "one two"),
+        ("--l", "one two"),
         ("--quoting-style=c", "\"one two\""),
         ("-Q", "\"one two\""),
         ("--quote-name", "\"one two\""),
@@ -2474,7 +2570,7 @@ fn test_ls_quoting_style() {
             .arg(arg)
             .arg("one two")
             .succeeds()
-            .stdout_only(format!("{}\n", correct));
+            .stdout_only(format!("{correct}\n"));
     }
 
     scene.ucmd().arg("one").succeeds().stdout_only("one\n");
@@ -2498,7 +2594,7 @@ fn test_ls_quoting_style() {
             .arg(arg)
             .arg("one")
             .succeeds()
-            .stdout_only(format!("{}\n", correct));
+            .stdout_only(format!("{correct}\n"));
     }
 }
 
@@ -3028,31 +3124,31 @@ fn test_ls_path() {
     let file1 = "file1";
     let file2 = "file2";
     let dir = "dir";
-    let path = &format!("{}/{}", dir, file2);
+    let path = &format!("{dir}/{file2}");
 
     at.mkdir(dir);
     at.touch(file1);
     at.touch(path);
 
-    let expected_stdout = &format!("{}\n", path);
+    let expected_stdout = &format!("{path}\n");
     scene.ucmd().arg(path).run().stdout_is(expected_stdout);
 
-    let expected_stdout = &format!("./{}\n", path);
+    let expected_stdout = &format!("./{path}\n");
     scene
         .ucmd()
-        .arg(format!("./{}", path))
+        .arg(format!("./{path}"))
         .run()
         .stdout_is(expected_stdout);
 
     let abs_path = format!("{}/{}", at.as_string(), path);
     let expected_stdout = if cfg!(windows) {
-        format!("\'{}\'\n", abs_path)
+        format!("\'{abs_path}\'\n")
     } else {
-        format!("{}\n", abs_path)
+        format!("{abs_path}\n")
     };
     scene.ucmd().arg(&abs_path).run().stdout_is(expected_stdout);
 
-    let expected_stdout = format!("{}\n{}\n", path, file1);
+    let expected_stdout = format!("{path}\n{file1}\n");
     scene
         .ucmd()
         .arg(file1)
@@ -3091,6 +3187,16 @@ fn test_ls_dangling_symlinks() {
     scene
         .ucmd()
         .arg("-Li")
+        .arg("temp_dir")
+        .fails()
+        .code_is(1)
+        .stderr_contains("cannot access")
+        .stderr_contains("No such file or directory")
+        .stdout_contains(if cfg!(windows) { "dangle" } else { "? dangle" });
+
+    scene
+        .ucmd()
+        .arg("-LZ")
         .arg("temp_dir")
         .fails()
         .code_is(1)
@@ -3195,7 +3301,7 @@ fn test_ls_context_format() {
     ] {
         let format = format!("--format={}", word);
         ts.ucmd()
-            .args(&[&"-Z", &format.as_str(), &"/"])
+            .args(&["-Z", format.as_str(), "/"])
             .succeeds()
             .stdout_only(
                 unwrap_or_return!(expected_result(&ts, &["-Z", format.as_str(), "/"])).stdout_str(),
@@ -3379,4 +3485,331 @@ fn test_tabsize_formatting() {
     ucmd.args(&["-T", "0"])
         .succeeds()
         .stdout_is("aaaaaaaa bbbb\ncccc     dddddddd");
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "illumos",
+    target_os = "solaris"
+))]
+#[test]
+fn test_device_number() {
+    use std::fs::{metadata, read_dir};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    use uucore::libc::{dev_t, major, minor};
+
+    let dev_dir = read_dir("/dev").unwrap();
+    // let's use the first device for test
+    let blk_dev = dev_dir
+        .map(|res_entry| res_entry.unwrap())
+        .find(|entry| {
+            entry.file_type().unwrap().is_block_device()
+                || entry.file_type().unwrap().is_char_device()
+        })
+        .expect("Expect a block/char device");
+    let blk_dev_path = blk_dev.path();
+    let blk_dev_meta = metadata(blk_dev_path.as_path()).unwrap();
+    let blk_dev_number = blk_dev_meta.rdev() as dev_t;
+    let (major, minor) = unsafe { (major(blk_dev_number), minor(blk_dev_number)) };
+    let major_minor_str = format!("{}, {}", major, minor);
+
+    let scene = TestScenario::new(util_name!());
+    scene
+        .ucmd()
+        .arg("-l")
+        .arg(blk_dev_path.to_str().expect("should be UTF-8 encoded"))
+        .succeeds()
+        .stdout_contains(major_minor_str);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn test_invalid_utf8() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    let filename = OsStr::from_bytes(b"-\xE0-foo");
+    at.touch(filename);
+    ucmd.succeeds();
+}
+
+#[cfg(all(unix, feature = "chmod"))]
+#[test]
+fn test_ls_perm_io_errors() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    at.mkdir("d");
+    at.symlink_file("/", "d/s");
+
+    scene.ccmd("chmod").arg("600").arg("d").succeeds();
+
+    scene
+        .ucmd()
+        .arg("-l")
+        .arg("d")
+        .fails()
+        .code_is(1)
+        .stderr_contains("Permission denied");
+}
+
+#[test]
+fn test_ls_dired_incompatible() {
+    let scene = TestScenario::new(util_name!());
+
+    scene
+        .ucmd()
+        .arg("--dired")
+        .fails()
+        .code_is(1)
+        .stderr_contains("--dired requires --format=long");
+}
+
+#[test]
+fn test_ls_dired_and_zero_are_incompatible() {
+    let scene = TestScenario::new(util_name!());
+
+    scene
+        .ucmd()
+        .arg("--dired")
+        .arg("-l")
+        .arg("--zero")
+        .fails()
+        .code_is(2)
+        .stderr_contains("--dired and --zero are incompatible");
+}
+
+#[test]
+fn test_ls_dired_recursive() {
+    let scene = TestScenario::new(util_name!());
+
+    scene
+        .ucmd()
+        .arg("--dired")
+        .arg("-l")
+        .arg("-R")
+        .succeeds()
+        .stdout_does_not_contain("//DIRED//")
+        .stdout_contains("  total 0")
+        .stdout_contains("//SUBDIRED// 2 3")
+        .stdout_contains("//DIRED-OPTIONS// --quoting-style");
+}
+
+#[test]
+fn test_ls_dired_recursive_multiple() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir("d");
+    at.mkdir("d/d1");
+    at.mkdir("d/d2");
+    at.touch("d/d2/a");
+    at.touch("d/d2/c2");
+    at.touch("d/d1/f1");
+    at.touch("d/d1/file-long");
+
+    let mut cmd = scene.ucmd();
+    cmd.arg("--dired").arg("-l").arg("-R").arg("d");
+
+    let result = cmd.succeeds();
+
+    let output = result.stdout_str().to_string();
+    println!("Output:\n{}", output);
+
+    let dired_line = output
+        .lines()
+        .find(|&line| line.starts_with("//DIRED//"))
+        .unwrap();
+    let positions: Vec<usize> = dired_line
+        .split_whitespace()
+        .skip(1)
+        .map(|s| s.parse().unwrap())
+        .collect();
+    println!("Parsed byte positions: {:?}", positions);
+    assert_eq!(positions.len() % 2, 0); // Ensure there's an even number of positions
+
+    let filenames: Vec<String> = positions
+        .chunks(2)
+        .map(|chunk| {
+            let start_pos = chunk[0];
+            let end_pos = chunk[1];
+            let filename = String::from_utf8(output.as_bytes()[start_pos..=end_pos].to_vec())
+                .unwrap()
+                .trim()
+                .to_string();
+            println!("Extracted filename: {}", filename);
+            filename
+        })
+        .collect();
+
+    println!("Extracted filenames: {:?}", filenames);
+    assert_eq!(filenames, vec!["d1", "d2", "f1", "file-long", "a", "c2"]);
+}
+
+#[test]
+fn test_ls_dired_simple() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+    scene
+        .ucmd()
+        .arg("--dired")
+        .arg("-l")
+        .succeeds()
+        .stdout_contains("  total 0");
+
+    at.mkdir("d");
+    at.touch("d/a1");
+    let mut cmd = scene.ucmd();
+    cmd.arg("--dired").arg("-l").arg("d");
+    let result = cmd.succeeds();
+    result.stdout_contains("  total 0");
+    println!("    result.stdout = {:#?}", result.stdout_str());
+
+    let dired_line = result
+        .stdout_str()
+        .lines()
+        .find(|&line| line.starts_with("//DIRED//"))
+        .unwrap();
+    let positions: Vec<usize> = dired_line
+        .split_whitespace()
+        .skip(1)
+        .map(|s| s.parse().unwrap())
+        .collect();
+
+    assert_eq!(positions.len(), 2);
+
+    let start_pos = positions[0];
+    let end_pos = positions[1];
+
+    // Extract the filename using the positions
+    let filename =
+        String::from_utf8(result.stdout_str().as_bytes()[start_pos..end_pos].to_vec()).unwrap();
+
+    assert_eq!(filename, "a1");
+}
+
+#[test]
+fn test_ls_dired_complex() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir("d");
+    at.mkdir("d/d");
+    at.touch("d/a1");
+    at.touch("d/a22");
+    at.touch("d/a333");
+    at.touch("d/a4444");
+
+    let mut cmd = scene.ucmd();
+    cmd.arg("--dired").arg("-l").arg("d");
+    let result = cmd.succeeds();
+
+    // Number of blocks. We run this test only if the default size of a newly created directory is
+    // 4096 bytes to prevent it from failing where this is not the case (e.g. using tmpfs for /tmp).
+    #[cfg(target_os = "linux")]
+    if at.metadata("d/d").len() == 4096 {
+        result.stdout_contains("  total 4");
+    }
+
+    let output = result.stdout_str().to_string();
+    println!("Output:\n{}", output);
+
+    let dired_line = output
+        .lines()
+        .find(|&line| line.starts_with("//DIRED//"))
+        .unwrap();
+    let positions: Vec<usize> = dired_line
+        .split_whitespace()
+        .skip(1)
+        .map(|s| s.parse().unwrap())
+        .collect();
+    println!("{:?}", positions);
+    println!("Parsed byte positions: {:?}", positions);
+    assert_eq!(positions.len() % 2, 0); // Ensure there's an even number of positions
+
+    let filenames: Vec<String> = positions
+        .chunks(2)
+        .map(|chunk| {
+            let start_pos = chunk[0];
+            let end_pos = chunk[1];
+            let filename = String::from_utf8(output.as_bytes()[start_pos..=end_pos].to_vec())
+                .unwrap()
+                .trim()
+                .to_string();
+            println!("Extracted filename: {}", filename);
+            filename
+        })
+        .collect();
+
+    println!("Extracted filenames: {:?}", filenames);
+    assert_eq!(filenames, vec!["a1", "a22", "a333", "a4444", "d"]);
+}
+
+#[test]
+fn test_ls_subdired_complex() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    at.mkdir("dir1");
+    at.mkdir("dir1/d");
+    at.mkdir("dir1/c2");
+    at.touch("dir1/a1");
+    at.touch("dir1/a22");
+    at.touch("dir1/a333");
+    at.touch("dir1/c2/a4444");
+
+    let mut cmd = scene.ucmd();
+    cmd.arg("--dired").arg("-l").arg("-R").arg("dir1");
+    let result = cmd.succeeds();
+
+    let output = result.stdout_str().to_string();
+    println!("Output:\n{}", output);
+
+    let dired_line = output
+        .lines()
+        .find(|&line| line.starts_with("//SUBDIRED//"))
+        .unwrap();
+    let positions: Vec<usize> = dired_line
+        .split_whitespace()
+        .skip(1)
+        .map(|s| s.parse().unwrap())
+        .collect();
+    println!("Parsed byte positions: {:?}", positions);
+    assert_eq!(positions.len() % 2, 0); // Ensure there's an even number of positions
+
+    let dirnames: Vec<String> = positions
+        .chunks(2)
+        .map(|chunk| {
+            let start_pos = chunk[0];
+            let end_pos = chunk[1];
+            let dirname =
+                String::from_utf8(output.as_bytes()[start_pos..end_pos].to_vec()).unwrap();
+            println!("Extracted dirname: {}", dirname);
+            dirname
+        })
+        .collect();
+
+    println!("Extracted dirnames: {:?}", dirnames);
+    #[cfg(unix)]
+    assert_eq!(dirnames, vec!["dir1", "dir1/c2", "dir1/d"]);
+    #[cfg(windows)]
+    assert_eq!(dirnames, vec!["dir1", "dir1\\c2", "dir1\\d"]);
+}
+
+#[ignore = "issue #5396"]
+#[test]
+fn test_ls_cf_output_should_be_delimited_by_tab() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    at.mkdir("e");
+    at.mkdir("e/a2345");
+    at.mkdir("e/b");
+
+    ucmd.args(&["-CF", "e"])
+        .succeeds()
+        .stdout_is("a2345/\tb/\n");
 }

@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // Copyright 2018 Developers of the Rand project.
 // Copyright 2013 The Rust Project Developers.
 //
@@ -54,10 +58,7 @@ impl<R: Read> RngCore for ReadRng<R> {
 
     fn fill_bytes(&mut self, dest: &mut [u8]) {
         self.try_fill_bytes(dest).unwrap_or_else(|err| {
-            panic!(
-                "reading random bytes from Read implementation failed; error: {}",
-                err
-            );
+            panic!("reading random bytes from Read implementation failed; error: {err}");
         });
     }
 

@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (vars) charf decf floatf intf scif strf Cninety
 // spell-checker:ignore (ToDO) arrnum
 
@@ -81,9 +85,9 @@ fn get_primitive_hex(
     let suffix = Some({
         let ind = if capitalized { "P" } else { "p" };
         if mantissa >= 0 {
-            format!("{}+{}", ind, mantissa)
+            format!("{ind}+{mantissa}")
         } else {
-            format!("{}{}", ind, mantissa)
+            format!("{ind}{mantissa}")
         }
     });
     FormatPrimitive {

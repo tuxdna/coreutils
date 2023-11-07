@@ -1,8 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Vsevolod Velichko <torkvemada@sorokdva.net>
-// (c) Jian Zeng <anonymousknight96 AT gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -19,10 +16,10 @@ use std::process;
 use uucore::error::{set_exit_code, UClapError, UResult, UUsageError};
 use uucore::fs::{canonicalize, MissingHandling, ResolveMode};
 use uucore::libc::{self, chroot, setgid, setgroups, setuid};
-use uucore::{entries, format_usage};
+use uucore::{entries, format_usage, help_about, help_usage};
 
-static ABOUT: &str = "Run COMMAND with root directory set to NEWROOT.";
-static USAGE: &str = "{} [OPTION]... NEWROOT [COMMAND [ARG]...]";
+static ABOUT: &str = help_about!("chroot.md");
+static USAGE: &str = help_usage!("chroot.md");
 
 mod options {
     pub const NEWROOT: &str = "newroot";

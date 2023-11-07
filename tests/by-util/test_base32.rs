@@ -1,12 +1,10 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 //
 
-use crate::common::util::*;
+use crate::common::util::TestScenario;
 
 #[test]
 fn test_encode() {
@@ -86,7 +84,7 @@ fn test_wrap() {
 fn test_wrap_no_arg() {
     for wrap_param in ["-w", "--wrap"] {
         let ts = TestScenario::new(util_name!());
-        let expected_stderr = "The argument '--wrap <COLS>' requires a value but none was supplied";
+        let expected_stderr = "a value is required for '--wrap <COLS>' but none was supplied";
         ts.ucmd()
             .arg(wrap_param)
             .fails()
@@ -121,5 +119,5 @@ fn test_base32_file_not_found() {
     new_ucmd!()
         .arg("a.txt")
         .fails()
-        .stderr_only("base32: a.txt: No such file or directory");
+        .stderr_only("base32: a.txt: No such file or directory\n");
 }

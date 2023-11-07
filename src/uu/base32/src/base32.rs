@@ -1,18 +1,16 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-//
-// For the full copyright and license information, please view the LICENSE file
-// that was distributed with this source code.
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 use std::io::{stdin, Read};
 
 use clap::Command;
-use uucore::{encoding::Format, error::UResult, help_section, help_usage};
+use uucore::{encoding::Format, error::UResult, help_about, help_usage};
 
 pub mod base_common;
 
-const ABOUT: &str = help_section!("about", "base32.md");
+const ABOUT: &str = help_about!("base32.md");
 const USAGE: &str = help_usage!("base32.md");
 
 #[uucore::main]

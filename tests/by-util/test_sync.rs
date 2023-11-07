@@ -1,5 +1,8 @@
-use crate::common::util::*;
-extern crate tempfile;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
 use std::fs;
 use tempfile::tempdir;
 
@@ -42,7 +45,7 @@ fn test_sync_no_existing_files() {
         .arg("--data")
         .arg("do-no-exist")
         .fails()
-        .stderr_contains("cannot stat");
+        .stderr_contains("error opening");
 }
 
 #[test]

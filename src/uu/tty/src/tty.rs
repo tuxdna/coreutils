@@ -1,22 +1,20 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Jordi Boggiano <j.boggiano@seld.be>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 //  *
 //  * Synced with http://lingrok.org/xref/coreutils/src/tty.c
 
 // spell-checker:ignore (ToDO) ttyname filedesc
 
 use clap::{crate_version, Arg, ArgAction, Command};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::os::unix::io::AsRawFd;
 use uucore::error::{set_exit_code, UResult};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
-static ABOUT: &str = "Print the file name of the terminal connected to standard input.";
-const USAGE: &str = "{} [OPTION]...";
+const ABOUT: &str = help_about!("tty.md");
+const USAGE: &str = help_usage!("tty.md");
 
 mod options {
     pub const SILENT: &str = "silent";
@@ -30,7 +28,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // If silent, we don't need the name, only whether or not stdin is a tty.
     if silent {
-        return if atty::is(atty::Stream::Stdin) {
+        return if std::io::stdin().is_terminal() {
             Ok(())
         } else {
             Err(1.into())

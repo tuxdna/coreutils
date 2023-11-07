@@ -1,12 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Derek Chiang <derekchiang93@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
-
-#[macro_use]
-extern crate uucore;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 use chrono::prelude::DateTime;
 use chrono::Local;
@@ -36,20 +31,20 @@ use std::time::{Duration, UNIX_EPOCH};
 use std::{error::Error, fmt::Display};
 use uucore::display::{print_verbatim, Quotable};
 use uucore::error::FromIo;
-use uucore::error::{UError, UResult};
-use uucore::format_usage;
+use uucore::error::{set_exit_code, UError, UResult};
+use uucore::line_ending::LineEnding;
 use uucore::parse_glob;
-use uucore::parse_size::{parse_size, ParseSizeError};
+use uucore::parse_size::{parse_size_u64, ParseSizeError};
+use uucore::{
+    crash, format_usage, help_about, help_section, help_usage, show, show_error, show_warning,
+};
 #[cfg(windows)]
-use winapi::shared::minwindef::{DWORD, LPVOID};
+use windows_sys::Win32::Foundation::HANDLE;
 #[cfg(windows)]
-use winapi::um::fileapi::{FILE_ID_INFO, FILE_STANDARD_INFO};
-#[cfg(windows)]
-use winapi::um::minwinbase::{FileIdInfo, FileStandardInfo};
-#[cfg(windows)]
-use winapi::um::winbase::GetFileInformationByHandleEx;
-#[cfg(windows)]
-use winapi::um::winnt::FILE_ID_128;
+use windows_sys::Win32::Storage::FileSystem::{
+    FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx, FILE_ID_128, FILE_ID_INFO,
+    FILE_STANDARD_INFO,
+};
 
 mod options {
     pub const HELP: &str = "help";
@@ -72,6 +67,8 @@ mod options {
     pub const TIME_STYLE: &str = "time-style";
     pub const ONE_FILE_SYSTEM: &str = "one-file-system";
     pub const DEREFERENCE: &str = "dereference";
+    pub const DEREFERENCE_ARGS: &str = "dereference-args";
+    pub const NO_DEREFERENCE: &str = "no-dereference";
     pub const INODES: &str = "inodes";
     pub const EXCLUDE: &str = "exclude";
     pub const EXCLUDE_FROM: &str = "exclude-from";
@@ -79,25 +76,9 @@ mod options {
     pub const FILE: &str = "FILE";
 }
 
-const ABOUT: &str = "estimate file space usage";
-const LONG_HELP: &str = "
-Display values are in units of the first available SIZE from --block-size,
-and the DU_BLOCK_SIZE, BLOCK_SIZE and BLOCKSIZE environment variables.
-Otherwise, units default to 1024 bytes (or 512 if POSIXLY_CORRECT is set).
-
-SIZE is an integer and optional unit (example: 10M is 10*1024*1024).
-Units are K, M, G, T, P, E, Z, Y (powers of 1024) or KB, MB,... (powers
-of 1000).
-
-PATTERN allows some advanced exclusions. For example, the following syntaxes
-are supported:
-? will match only one character
-* will match zero or more characters
-{a,b} will match a or b
-";
-const USAGE: &str = "\
-    {} [OPTION]... [FILE]...
-    {} [OPTION]... --files0-from=F";
+const ABOUT: &str = help_about!("du.md");
+const AFTER_HELP: &str = help_section!("after help", "du.md");
+const USAGE: &str = help_usage!("du.md");
 
 // TODO: Support Z & Y (currently limited by size of u64)
 const UNITS: [(char, u32); 6] = [('E', 6), ('P', 5), ('T', 4), ('G', 3), ('M', 2), ('K', 1)];
@@ -108,9 +89,16 @@ struct Options {
     total: bool,
     separate_dirs: bool,
     one_file_system: bool,
-    dereference: bool,
+    dereference: Deref,
     inodes: bool,
     verbose: bool,
+}
+
+#[derive(PartialEq)]
+enum Deref {
+    All,
+    Args(Vec<PathBuf>),
+    None,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
@@ -132,12 +120,21 @@ struct Stat {
 }
 
 impl Stat {
-    fn new(path: PathBuf, options: &Options) -> Result<Self> {
-        let metadata = if options.dereference {
-            fs::metadata(&path)?
-        } else {
-            fs::symlink_metadata(&path)?
+    fn new(path: &Path, options: &Options) -> Result<Self> {
+        // Determine whether to dereference (follow) the symbolic link
+        let should_dereference = match &options.dereference {
+            Deref::All => true,
+            Deref::Args(paths) => paths.contains(&path.to_path_buf()),
+            Deref::None => false,
         };
+
+        let metadata = if should_dereference {
+            // Get metadata, following symbolic links if necessary
+            fs::metadata(path)
+        } else {
+            // Get metadata without following symbolic links
+            fs::symlink_metadata(path)
+        }?;
 
         #[cfg(not(windows))]
         let file_info = FileInfo {
@@ -146,10 +143,10 @@ impl Stat {
         };
         #[cfg(not(windows))]
         return Ok(Self {
-            path,
+            path: path.to_path_buf(),
             is_dir: metadata.is_dir(),
-            size: metadata.len(),
-            blocks: metadata.blocks() as u64,
+            size: if path.is_dir() { 0 } else { metadata.len() },
+            blocks: metadata.blocks(),
             inodes: 1,
             inode: Some(file_info),
             created: birth_u64(&metadata),
@@ -158,14 +155,14 @@ impl Stat {
         });
 
         #[cfg(windows)]
-        let size_on_disk = get_size_on_disk(&path);
+        let size_on_disk = get_size_on_disk(path);
         #[cfg(windows)]
-        let file_info = get_file_info(&path);
+        let file_info = get_file_info(path);
         #[cfg(windows)]
         Ok(Self {
-            path,
+            path: path.to_path_buf(),
             is_dir: metadata.is_dir(),
-            size: metadata.len(),
+            size: if path.is_dir() { 0 } else { metadata.len() },
             blocks: size_on_disk / 1024 * 2,
             inode: file_info,
             inodes: 1,
@@ -194,7 +191,7 @@ fn birth_u64(meta: &Metadata) -> Option<u64> {
     meta.created()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|e| e.as_secs() as u64)
+        .map(|e| e.as_secs())
 }
 
 #[cfg(windows)]
@@ -208,21 +205,19 @@ fn get_size_on_disk(path: &Path) -> u64 {
         Err(_) => return size_on_disk, // opening directories will fail
     };
 
-    let handle = file.as_raw_handle();
-
     unsafe {
         let mut file_info: FILE_STANDARD_INFO = core::mem::zeroed();
         let file_info_ptr: *mut FILE_STANDARD_INFO = &mut file_info;
 
         let success = GetFileInformationByHandleEx(
-            handle,
+            file.as_raw_handle() as HANDLE,
             FileStandardInfo,
-            file_info_ptr as LPVOID,
-            std::mem::size_of::<FILE_STANDARD_INFO>() as DWORD,
+            file_info_ptr as _,
+            std::mem::size_of::<FILE_STANDARD_INFO>() as u32,
         );
 
         if success != 0 {
-            size_on_disk = *file_info.AllocationSize.QuadPart() as u64;
+            size_on_disk = file_info.AllocationSize as u64;
         }
     }
 
@@ -238,17 +233,15 @@ fn get_file_info(path: &Path) -> Option<FileInfo> {
         Err(_) => return result,
     };
 
-    let handle = file.as_raw_handle();
-
     unsafe {
         let mut file_info: FILE_ID_INFO = core::mem::zeroed();
         let file_info_ptr: *mut FILE_ID_INFO = &mut file_info;
 
         let success = GetFileInformationByHandleEx(
-            handle,
+            file.as_raw_handle() as HANDLE,
             FileIdInfo,
-            file_info_ptr as LPVOID,
-            std::mem::size_of::<FILE_ID_INFO>() as DWORD,
+            file_info_ptr as _,
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
         );
 
         if success != 0 {
@@ -264,12 +257,12 @@ fn get_file_info(path: &Path) -> Option<FileInfo> {
 
 fn read_block_size(s: Option<&str>) -> u64 {
     if let Some(s) = s {
-        parse_size(s)
+        parse_size_u64(s)
             .unwrap_or_else(|e| crash!(1, "{}", format_error_message(&e, s, options::BLOCK_SIZE)))
     } else {
         for env_var in ["DU_BLOCK_SIZE", "BLOCK_SIZE", "BLOCKSIZE"] {
             if let Ok(env_size) = env::var(env_var) {
-                if let Ok(v) = parse_size(&env_size) {
+                if let Ok(v) = parse_size_u64(&env_size) {
                     return v;
                 }
             }
@@ -296,6 +289,7 @@ fn choose_size(matches: &ArgMatches, stat: &Stat) -> u64 {
 
 // this takes `my_stat` to avoid having to stat files multiple times.
 // XXX: this should use the impl Trait return type when it is stabilized
+#[allow(clippy::cognitive_complexity)]
 fn du(
     mut my_stat: Stat,
     options: &Options,
@@ -320,7 +314,7 @@ fn du(
         'file_loop: for f in read {
             match f {
                 Ok(entry) => {
-                    match Stat::new(entry.path(), options) {
+                    match Stat::new(&entry.path(), options) {
                         Ok(this_stat) => {
                             // We have an exclude list
                             for pattern in exclude {
@@ -399,7 +393,7 @@ fn convert_size_human(size: u64, multiplier: u64, _block_size: u64) -> String {
     if size == 0 {
         return "0".to_string();
     }
-    format!("{}B", size)
+    format!("{size}B")
 }
 
 fn convert_size_b(size: u64, _multiplier: u64, _block_size: u64) -> String {
@@ -419,6 +413,20 @@ fn convert_size_m(size: u64, multiplier: u64, _block_size: u64) -> String {
 
 fn convert_size_other(size: u64, _multiplier: u64, block_size: u64) -> String {
     format!("{}", ((size as f64) / (block_size as f64)).ceil())
+}
+
+fn get_convert_size_fn(matches: &ArgMatches) -> Box<dyn Fn(u64, u64, u64) -> String> {
+    if matches.get_flag(options::HUMAN_READABLE) || matches.get_flag(options::SI) {
+        Box::new(convert_size_human)
+    } else if matches.get_flag(options::BYTES) {
+        Box::new(convert_size_b)
+    } else if matches.get_flag(options::BLOCK_SIZE_1K) {
+        Box::new(convert_size_k)
+    } else if matches.get_flag(options::BLOCK_SIZE_1M) {
+        Box::new(convert_size_m)
+    } else {
+        Box::new(convert_size_other)
+    }
 }
 
 #[derive(Debug)]
@@ -458,7 +466,7 @@ Try '{} --help' for more information.",
 'birth' and 'creation' arguments are not supported on this platform.",
                 s.quote()
             ),
-            Self::InvalidGlob(s) => write!(f, "Invalid exclude syntax: {}", s),
+            Self::InvalidGlob(s) => write!(f, "Invalid exclude syntax: {s}"),
         }
     }
 }
@@ -498,7 +506,7 @@ fn build_exclude_patterns(matches: &ArgMatches) -> UResult<Vec<Pattern>> {
     let excludes_iterator = matches
         .get_many::<String>(options::EXCLUDE)
         .unwrap_or_default()
-        .map(|v| v.to_owned());
+        .cloned();
 
     let mut exclude_patterns = Vec::new();
     for f in excludes_iterator.chain(exclude_from_iterator) {
@@ -529,24 +537,31 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         summarize,
     )?;
 
+    let files = match matches.get_one::<String>(options::FILE) {
+        Some(_) => matches
+            .get_many::<String>(options::FILE)
+            .unwrap()
+            .map(PathBuf::from)
+            .collect(),
+        None => vec![PathBuf::from(".")],
+    };
+
     let options = Options {
         all: matches.get_flag(options::ALL),
         max_depth,
         total: matches.get_flag(options::TOTAL),
         separate_dirs: matches.get_flag(options::SEPARATE_DIRS),
         one_file_system: matches.get_flag(options::ONE_FILE_SYSTEM),
-        dereference: matches.get_flag(options::DEREFERENCE),
+        dereference: if matches.get_flag(options::DEREFERENCE) {
+            Deref::All
+        } else if matches.get_flag(options::DEREFERENCE_ARGS) {
+            // We don't care about the cost of cloning as it is rarely used
+            Deref::Args(files.clone())
+        } else {
+            Deref::None
+        },
         inodes: matches.get_flag(options::INODES),
         verbose: matches.get_flag(options::VERBOSE),
-    };
-
-    let files = match matches.get_one::<String>(options::FILE) {
-        Some(_) => matches
-            .get_many::<String>(options::FILE)
-            .unwrap()
-            .map(|s| s.as_str())
-            .collect(),
-        None => vec!["."],
     };
 
     if options.inodes
@@ -571,19 +586,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     } else {
         1024
     };
-    let convert_size_fn = {
-        if matches.get_flag(options::HUMAN_READABLE) || matches.get_flag(options::SI) {
-            convert_size_human
-        } else if matches.get_flag(options::BYTES) {
-            convert_size_b
-        } else if matches.get_flag(options::BLOCK_SIZE_1K) {
-            convert_size_k
-        } else if matches.get_flag(options::BLOCK_SIZE_1M) {
-            convert_size_m
-        } else {
-            convert_size_other
-        }
-    };
+
+    let convert_size_fn = get_convert_size_fn(&matches);
+
     let convert_size = |size: u64| {
         if options.inodes {
             size.to_string()
@@ -595,20 +600,17 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let time_format_str =
         parse_time_style(matches.get_one::<String>("time-style").map(|s| s.as_str()))?;
 
-    let line_separator = if matches.get_flag(options::NULL) {
-        "\0"
-    } else {
-        "\n"
-    };
+    let line_ending = LineEnding::from_zero_flag(matches.get_flag(options::NULL));
 
     let excludes = build_exclude_patterns(&matches)?;
 
     let mut grand_total = 0;
-    'loop_file: for path_string in files {
+    'loop_file: for path in files {
         // Skip if we don't want to ignore anything
         if !&excludes.is_empty() {
+            let path_string = path.to_string_lossy();
             for pattern in &excludes {
-                if pattern.matches(path_string) {
+                if pattern.matches(&path_string) {
                     // if the directory is ignored, leave early
                     if options.verbose {
                         println!("{} ignored", path_string.quote());
@@ -618,9 +620,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             }
         }
 
-        let path = PathBuf::from(&path_string);
         // Check existence of path provided in argument
-        if let Ok(stat) = Stat::new(path, &options) {
+        if let Ok(stat) = Stat::new(&path, &options) {
             // Kick off the computation of disk usage from the initial path
             let mut inodes: HashSet<FileInfo> = HashSet::new();
             if let Some(inode) = stat.inode {
@@ -640,32 +641,23 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
                 if matches.contains_id(options::TIME) {
                     let tm = {
-                        let secs = {
-                            match matches.get_one::<String>(options::TIME) {
-                                Some(s) => match s.as_str() {
-                                    "ctime" | "status" => stat.modified,
-                                    "access" | "atime" | "use" => stat.accessed,
-                                    "birth" | "creation" => stat
-                                        .created
-                                        .ok_or_else(|| DuError::InvalidTimeArg(s.into()))?,
-                                    // below should never happen as clap already restricts the values.
-                                    _ => unreachable!("Invalid field for --time"),
-                                },
-                                None => stat.modified,
-                            }
-                        };
+                        let secs = matches
+                            .get_one::<String>(options::TIME)
+                            .map(|s| get_time_secs(s, &stat))
+                            .transpose()?
+                            .unwrap_or(stat.modified);
                         DateTime::<Local>::from(UNIX_EPOCH + Duration::from_secs(secs))
                     };
                     if !summarize || index == len - 1 {
                         let time_str = tm.format(time_format_str).to_string();
                         print!("{}\t{}\t", convert_size(size), time_str);
                         print_verbatim(stat.path).unwrap();
-                        print!("{}", line_separator);
+                        print!("{line_ending}");
                     }
                 } else if !summarize || index == len - 1 {
                     print!("{}\t", convert_size(size));
                     print_verbatim(stat.path).unwrap();
-                    print!("{}", line_separator);
+                    print!("{line_ending}");
                 }
                 if options.total && index == (len - 1) {
                     // The last element will be the total size of the the path under
@@ -676,18 +668,32 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         } else {
             show_error!(
                 "{}: {}",
-                path_string.maybe_quote(),
+                path.to_string_lossy().maybe_quote(),
                 "No such file or directory"
             );
+            set_exit_code(1);
         }
     }
 
     if options.total {
         print!("{}\ttotal", convert_size(grand_total));
-        print!("{}", line_separator);
+        print!("{line_ending}");
     }
 
     Ok(())
+}
+
+fn get_time_secs(s: &str, stat: &Stat) -> std::result::Result<u64, DuError> {
+    let secs = match s {
+        "ctime" | "status" => stat.modified,
+        "access" | "atime" | "use" => stat.accessed,
+        "birth" | "creation" => stat
+            .created
+            .ok_or_else(|| DuError::InvalidTimeArg(s.into()))?,
+        // below should never happen as clap already restricts the values.
+        _ => unreachable!("Invalid field for --time"),
+    };
+    Ok(secs)
 }
 
 fn parse_time_style(s: Option<&str>) -> UResult<&str> {
@@ -715,7 +721,7 @@ pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
         .version(crate_version!())
         .about(ABOUT)
-        .after_help(LONG_HELP)
+        .after_help(AFTER_HELP)
         .override_usage(format_usage(USAGE))
         .infer_long_args(true)
         .disable_help_flag(true)
@@ -809,16 +815,24 @@ pub fn uu_app() -> Command {
             Arg::new(options::DEREFERENCE)
                 .short('L')
                 .long(options::DEREFERENCE)
-                .help("dereference all symbolic links")
+                .help("follow all symbolic links")
                 .action(ArgAction::SetTrue)
         )
-        // .arg(
-        //     Arg::new("no-dereference")
-        //         .short('P')
-        //         .long("no-dereference")
-        //         .help("don't follow any symbolic links (this is the default)")
-        //         .action(ArgAction::SetTrue),        
-        // )
+        .arg(
+            Arg::new(options::DEREFERENCE_ARGS)
+                .short('D')
+                .long(options::DEREFERENCE_ARGS)
+                .help("follow only symlinks that are listed on the command line")
+                .action(ArgAction::SetTrue)
+        )
+         .arg(
+             Arg::new(options::NO_DEREFERENCE)
+                 .short('P')
+                 .long(options::NO_DEREFERENCE)
+                 .help("don't follow any symbolic links (this is the default)")
+                 .overrides_with(options::DEREFERENCE)
+                 .action(ArgAction::SetTrue),
+         )
         .arg(
             Arg::new(options::BLOCK_SIZE_1M)
                 .short('m')
@@ -934,9 +948,14 @@ impl FromStr for Threshold {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let offset = usize::from(s.starts_with(&['-', '+'][..]));
 
-        let size = parse_size(&s[offset..])?;
+        let size = parse_size_u64(&s[offset..])?;
 
         if s.starts_with('-') {
+            // Threshold of '-0' excludes everything besides 0 sized entries
+            // GNU's du treats '-0' as an invalid argument
+            if size == 0 {
+                return Err(ParseSizeError::ParseFailure(s.to_string()));
+            }
             Ok(Self::Upper(size))
         } else {
             Ok(Self::Lower(size))

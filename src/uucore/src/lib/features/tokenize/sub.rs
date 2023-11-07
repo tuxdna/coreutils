@@ -1,3 +1,7 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (vars) charf decf floatf intf scif strf Cninety
 
 //! Sub is a token that represents a
@@ -9,11 +13,11 @@ use crate::error::{UError, UResult};
 use itertools::{put_back_n, PutBackN};
 use std::error::Error;
 use std::fmt::Display;
+use std::io::Write;
 use std::iter::Peekable;
 use std::process::exit;
 use std::slice::Iter;
 use std::str::Chars;
-// use std::collections::HashSet;
 
 use super::num_format::format_field::{FieldType, FormatField};
 use super::num_format::num_format;
@@ -30,7 +34,7 @@ pub enum SubError {
 impl Display for SubError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
-            Self::InvalidSpec(s) => write!(f, "%{}: invalid conversion specification", s),
+            Self::InvalidSpec(s) => write!(f, "%{s}: invalid conversion specification"),
         }
     }
 }
@@ -112,7 +116,7 @@ impl Sub {
 }
 
 #[derive(Default)]
-struct SubParser {
+pub(crate) struct SubParser {
     min_width_tmp: Option<String>,
     min_width_is_asterisk: bool,
     past_decimal: bool,
@@ -127,20 +131,24 @@ impl SubParser {
     fn new() -> Self {
         Self::default()
     }
-    fn from_it(
+    pub(crate) fn from_it<W>(
+        writer: &mut W,
         it: &mut PutBackN<Chars>,
         args: &mut Peekable<Iter<String>>,
-    ) -> UResult<Option<Box<dyn token::Token>>> {
+    ) -> UResult<Option<token::Token>>
+    where
+        W: Write,
+    {
         let mut parser = Self::new();
         if parser.sub_vals_retrieved(it)? {
-            let t: Box<dyn token::Token> = Self::build_token(parser);
-            t.print(args);
+            let t = Self::build_token(parser);
+            t.write(writer, args);
             Ok(Some(t))
         } else {
             Ok(None)
         }
     }
-    fn build_token(parser: Self) -> Box<dyn token::Token> {
+    fn build_token(parser: Self) -> token::Token {
         // not a self method so as to allow move of sub-parser vals.
         // return new Sub struct as token
         let prefix_char = match &parser.min_width_tmp {
@@ -148,7 +156,7 @@ impl SubParser {
             _ => ' ',
         };
 
-        let t: Box<dyn token::Token> = Box::new(Sub::new(
+        token::Token::Sub(Sub::new(
             if parser.min_width_is_asterisk {
                 CanAsterisk::Asterisk
             } else {
@@ -166,9 +174,9 @@ impl SubParser {
             parser.field_char.unwrap(),
             parser.text_so_far,
             prefix_char,
-        ));
-        t
+        ))
     }
+    #[allow(clippy::cognitive_complexity)]
     fn sub_vals_retrieved(&mut self, it: &mut PutBackN<Chars>) -> UResult<bool> {
         if !Self::successfully_eat_prefix(it, &mut self.text_so_far)? {
             return Ok(false);
@@ -179,11 +187,11 @@ impl SubParser {
         // though, as we want to mimic the original behavior of printing
         // the field as interpreted up until the error in the field.
 
-        let mut legal_fields = vec![
+        let mut legal_fields = [
             // 'a', 'A', //c99 hex float implementation not yet complete
             'b', 'c', 'd', 'e', 'E', 'f', 'F', 'g', 'G', 'i', 'o', 's', 'u', 'x', 'X',
         ];
-        let mut specifiers = vec!['h', 'j', 'l', 'L', 't', 'z'];
+        let mut specifiers = ['h', 'j', 'l', 'L', 't', 'z'];
         legal_fields.sort_unstable();
         specifiers.sort_unstable();
 
@@ -191,32 +199,9 @@ impl SubParser {
         // into min_width, second_field, field_char
         for ch in it {
             self.text_so_far.push(ch);
-            match ch as char {
+            match ch {
                 '-' | '*' | '0'..='9' => {
-                    if !self.past_decimal {
-                        if self.min_width_is_asterisk || self.specifiers_found {
-                            return Err(SubError::InvalidSpec(self.text_so_far.clone()).into());
-                        }
-                        if self.min_width_tmp.is_none() {
-                            self.min_width_tmp = Some(String::new());
-                        }
-                        match self.min_width_tmp.as_mut() {
-                            Some(x) => {
-                                if (ch == '-' || ch == '*') && !x.is_empty() {
-                                    return Err(
-                                        SubError::InvalidSpec(self.text_so_far.clone()).into()
-                                    );
-                                }
-                                if ch == '*' {
-                                    self.min_width_is_asterisk = true;
-                                }
-                                x.push(ch);
-                            }
-                            None => {
-                                panic!("should be unreachable");
-                            }
-                        }
-                    } else {
+                    if self.past_decimal {
                         // second field should never have a
                         // negative value
                         if self.second_field_is_asterisk || ch == '-' || self.specifiers_found {
@@ -241,13 +226,36 @@ impl SubParser {
                                 panic!("should be unreachable");
                             }
                         }
+                    } else {
+                        if self.min_width_is_asterisk || self.specifiers_found {
+                            return Err(SubError::InvalidSpec(self.text_so_far.clone()).into());
+                        }
+                        if self.min_width_tmp.is_none() {
+                            self.min_width_tmp = Some(String::new());
+                        }
+                        match self.min_width_tmp.as_mut() {
+                            Some(x) => {
+                                if (ch == '-' || ch == '*') && !x.is_empty() {
+                                    return Err(
+                                        SubError::InvalidSpec(self.text_so_far.clone()).into()
+                                    );
+                                }
+                                if ch == '*' {
+                                    self.min_width_is_asterisk = true;
+                                }
+                                x.push(ch);
+                            }
+                            None => {
+                                panic!("should be unreachable");
+                            }
+                        }
                     }
                 }
                 '.' => {
-                    if !self.past_decimal {
-                        self.past_decimal = true;
-                    } else {
+                    if self.past_decimal {
                         return Err(SubError::InvalidSpec(self.text_so_far.clone()).into());
+                    } else {
+                        self.past_decimal = true;
                     }
                 }
                 x if legal_fields.binary_search(&x).is_ok() => {
@@ -337,16 +345,12 @@ impl SubParser {
     }
 }
 
-impl token::Tokenizer for Sub {
-    fn from_it(
-        it: &mut PutBackN<Chars>,
-        args: &mut Peekable<Iter<String>>,
-    ) -> UResult<Option<Box<dyn token::Token>>> {
-        SubParser::from_it(it, args)
-    }
-}
-impl token::Token for Sub {
-    fn print(&self, pf_args_it: &mut Peekable<Iter<String>>) {
+impl Sub {
+    #[allow(clippy::cognitive_complexity)]
+    pub(crate) fn write<W>(&self, writer: &mut W, pf_args_it: &mut Peekable<Iter<String>>)
+    where
+        W: Write,
+    {
         let field = FormatField {
             min_width: match self.min_width {
                 CanAsterisk::Fixed(x) => x,
@@ -397,7 +401,7 @@ impl token::Token for Sub {
                             }),
                             'b' => {
                                 let mut a_it = put_back_n(arg_string.chars());
-                                UnescapedText::from_it_core(&mut a_it, true);
+                                UnescapedText::from_it_core(writer, &mut a_it, true);
                                 None
                             }
                             // for 'c': get iter of string vals,
@@ -417,11 +421,12 @@ impl token::Token for Sub {
         };
         if let Some(pre_min_width) = pre_min_width_opt {
             // if have a string, print it, ensuring minimum width is met.
-            print!(
+            write!(
+                writer,
                 "{}",
                 match field.min_width {
                     Some(min_width) => {
-                        let diff: isize = min_width.abs() as isize - pre_min_width.len() as isize;
+                        let diff: isize = min_width.abs() - pre_min_width.len() as isize;
                         if diff > 0 {
                             let mut final_str = String::new();
                             // definitely more efficient ways
@@ -443,7 +448,8 @@ impl token::Token for Sub {
                     }
                     None => pre_min_width,
                 }
-            );
+            )
+            .ok();
         }
     }
 }

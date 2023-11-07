@@ -1,27 +1,20 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Jordi Boggiano <j.boggiano@seld.be>
-//  * (c) Jian Zeng <anonymousknight86@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) getloadavg upsecs updays nusers loadavg boottime uphours upmins
 
 use chrono::{Local, TimeZone, Utc};
 use clap::{crate_version, Arg, ArgAction, Command};
 
-use uucore::format_usage;
-// import crate time from utmpx
-pub use uucore::libc;
 use uucore::libc::time_t;
+use uucore::{format_usage, help_about, help_usage};
 
 use uucore::error::{UResult, USimpleError};
 
-static ABOUT: &str = "Display the current time, the length of time the system has been up,\n\
-                      the number of users on the system, and the average number of jobs\n\
-                      in the run queue over the last 1, 5 and 15 minutes.";
-const USAGE: &str = "{} [OPTION]...";
+const ABOUT: &str = help_about!("uptime.md");
+const USAGE: &str = help_usage!("uptime.md");
 pub mod options {
     pub static SINCE: &str = "since";
 }
@@ -44,7 +37,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         Err(USimpleError::new(1, "could not retrieve system uptime"))
     } else {
         if matches.get_flag(options::SINCE) {
-            let initial_date = Local.timestamp(Utc::now().timestamp() - uptime, 0);
+            let initial_date = Local
+                .timestamp_opt(Utc::now().timestamp() - uptime, 0)
+                .unwrap();
             println!("{}", initial_date.format("%Y-%m-%d %H:%M:%S"));
             return Ok(());
         }
@@ -113,8 +108,8 @@ fn process_utmpx() -> (Option<time_t>, usize) {
             USER_PROCESS => nusers += 1,
             BOOT_TIME => {
                 let dt = line.login_time();
-                if dt.second() > 0 {
-                    boot_time = Some(dt.second() as time_t);
+                if dt.unix_timestamp() > 0 {
+                    boot_time = Some(dt.unix_timestamp() as time_t);
                 }
             }
             _ => continue,
@@ -131,7 +126,7 @@ fn process_utmpx() -> (Option<time_t>, usize) {
 fn print_nusers(nusers: usize) {
     match nusers.cmp(&1) {
         std::cmp::Ordering::Equal => print!("1 user,  "),
-        std::cmp::Ordering::Greater => print!("{} users,  ", nusers),
+        std::cmp::Ordering::Greater => print!("{nusers} users,  "),
         _ => {}
     };
 }
@@ -158,7 +153,10 @@ fn get_uptime(boot_time: Option<time_t>) -> i64 {
     proc_uptime.unwrap_or_else(|| match boot_time {
         Some(t) => {
             let now = Local::now().timestamp();
-            let boottime = t as i64;
+            #[cfg(target_pointer_width = "64")]
+            let boottime: i64 = t;
+            #[cfg(not(target_pointer_width = "64"))]
+            let boottime: i64 = t.into();
             now - boottime
         }
         None => -1,
@@ -175,10 +173,10 @@ fn print_uptime(upsecs: i64) {
     let uphours = (upsecs - (updays * 86400)) / 3600;
     let upmins = (upsecs - (updays * 86400) - (uphours * 3600)) / 60;
     match updays.cmp(&1) {
-        std::cmp::Ordering::Equal => print!("up {:1} day, {:2}:{:02},  ", updays, uphours, upmins),
+        std::cmp::Ordering::Equal => print!("up {updays:1} day, {uphours:2}:{upmins:02},  "),
         std::cmp::Ordering::Greater => {
-            print!("up {:1} days, {:2}:{:02},  ", updays, uphours, upmins);
+            print!("up {updays:1} days, {uphours:2}:{upmins:02},  ");
         }
-        _ => print!("up  {:2}:{:02}, ", uphours, upmins),
+        _ => print!("up  {uphours:2}:{upmins:02}, "),
     };
 }

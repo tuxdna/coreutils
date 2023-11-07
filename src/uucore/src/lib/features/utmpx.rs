@@ -1,7 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 //
@@ -42,15 +40,15 @@ use std::ptr;
 use std::sync::{Mutex, MutexGuard};
 
 pub use self::ut::*;
-use libc::utmpx;
-// pub use libc::getutxid;
-// pub use libc::getutxline;
-// pub use libc::pututxline;
 pub use libc::endutxent;
 pub use libc::getutxent;
 pub use libc::setutxent;
+use libc::utmpx;
 #[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "netbsd"))]
 pub use libc::utmpxname;
+
+/// # Safety
+/// Just fixed the clippy warning. Please add description here.
 #[cfg(target_os = "freebsd")]
 pub unsafe extern "C" fn utmpxname(_file: *const libc::c_char) -> libc::c_int {
     0
@@ -165,11 +163,11 @@ pub struct Utmpx {
 impl Utmpx {
     /// A.K.A. ut.ut_type
     pub fn record_type(&self) -> i16 {
-        self.inner.ut_type as i16
+        self.inner.ut_type
     }
     /// A.K.A. ut.ut_pid
     pub fn pid(&self) -> i32 {
-        self.inner.ut_pid as i32
+        self.inner.ut_pid
     }
     /// A.K.A. ut.ut_id
     pub fn terminal_suffix(&self) -> String {
@@ -189,8 +187,9 @@ impl Utmpx {
     }
     /// A.K.A. ut.ut_tv
     pub fn login_time(&self) -> time::OffsetDateTime {
-        let ts_nanos: i128 = (self.inner.ut_tv.tv_sec as i64 * 1_000_000_000_i64
-            + self.inner.ut_tv.tv_usec as i64 * 1_000_i64)
+        #[allow(clippy::unnecessary_cast)]
+        let ts_nanos: i128 = (1_000_000_000_i64 * self.inner.ut_tv.tv_sec as i64
+            + 1_000_i64 * self.inner.ut_tv.tv_usec as i64)
             .into();
         let local_offset = time::OffsetDateTime::now_local().unwrap().offset();
         time::OffsetDateTime::from_unix_timestamp_nanos(ts_nanos)
@@ -226,7 +225,6 @@ impl Utmpx {
         let (hostname, display) = host.split_once(':').unwrap_or((&host, ""));
 
         if !hostname.is_empty() {
-            extern crate dns_lookup;
             use dns_lookup::{getaddrinfo, AddrInfoHints};
 
             const AI_CANONNAME: i32 = 0x2;
@@ -241,7 +239,7 @@ impl Utmpx {
                         return Ok(if display.is_empty() {
                             ai_canonname
                         } else {
-                            format!("{}:{}", ai_canonname, display)
+                            format!("{ai_canonname}:{display}")
                         });
                     }
                 }
@@ -332,7 +330,9 @@ impl Iterator for UtmpxIter {
     fn next(&mut self) -> Option<Self::Item> {
         unsafe {
             let res = getutxent();
-            if !res.is_null() {
+            if res.is_null() {
+                None
+            } else {
                 // The data behind this pointer will be replaced by the next
                 // call to getutxent(), so we have to read it now.
                 // All the strings live inline in the struct as arrays, which
@@ -340,8 +340,6 @@ impl Iterator for UtmpxIter {
                 Some(Utmpx {
                     inner: ptr::read(res as *const _),
                 })
-            } else {
-                None
             }
         }
     }

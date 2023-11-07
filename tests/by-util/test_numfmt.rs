@@ -1,6 +1,10 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (paths) gnutest
 
-use crate::common::util::*;
+use crate::common::util::TestScenario;
 
 #[test]
 fn test_invalid_arg() {
@@ -60,8 +64,7 @@ fn test_from_iec_i_requires_suffix() {
             .fails()
             .code_is(2)
             .stderr_is(format!(
-                "numfmt: missing 'i' suffix in input: '{}' (e.g Ki/Mi/Gi)",
-                number
+                "numfmt: missing 'i' suffix in input: '{number}' (e.g Ki/Mi/Gi)\n"
             ));
     }
 }
@@ -151,7 +154,7 @@ fn test_header_error_if_non_numeric() {
     new_ucmd!()
         .args(&["--header=two"])
         .run()
-        .stderr_is("numfmt: invalid header value 'two'");
+        .stderr_is("numfmt: invalid header value 'two'\n");
 }
 
 #[test]
@@ -159,7 +162,7 @@ fn test_header_error_if_0() {
     new_ucmd!()
         .args(&["--header=0"])
         .run()
-        .stderr_is("numfmt: invalid header value '0'");
+        .stderr_is("numfmt: invalid header value '0'\n");
 }
 
 #[test]
@@ -167,7 +170,7 @@ fn test_header_error_if_negative() {
     new_ucmd!()
         .args(&["--header=-3"])
         .run()
-        .stderr_is("numfmt: invalid header value '-3'");
+        .stderr_is("numfmt: invalid header value '-3'\n");
 }
 
 #[test]
@@ -182,6 +185,11 @@ fn test_negative() {
         .pipe_in("-1024\n-1153434\n-107374182")
         .run()
         .stdout_is("-1.0Ki\n-1.2Mi\n-103Mi\n");
+}
+
+#[test]
+fn test_negative_zero() {
+    new_ucmd!().pipe_in("-0\n-0.0").run().stdout_is("0\n0.0\n");
 }
 
 #[test]
@@ -368,6 +376,19 @@ fn test_format_selected_fields() {
         .args(&["--from=auto", "--field", "1,4,3", "1K 2K 3K 4K 5K 6K"])
         .succeeds()
         .stdout_only("1000 2K 3000 4000 5K 6K\n");
+
+    new_ucmd!()
+        .args(&["--from=auto", "--field", "1,4 3", "1K 2K 3K 4K 5K 6K"])
+        .succeeds()
+        .stdout_only("1000 2K 3000 4000 5K 6K\n");
+}
+
+#[test]
+fn test_format_implied_range_and_field() {
+    new_ucmd!()
+        .args(&["--from=auto", "--field", "-2,4", "1K 2K 3K 4K 5K 6K"])
+        .succeeds()
+        .stdout_only("1000 2000 3K 4000 5K 6K\n");
 }
 
 #[test]
@@ -384,6 +405,18 @@ fn test_format_selected_field_range() {
         .args(&["--from=auto", "--field", "2-5", "1K 2K 3K 4K 5K 6K"])
         .succeeds()
         .stdout_only("1K 2000 3000 4000 5000 6K\n");
+}
+
+#[test]
+fn test_format_all_fields() {
+    let all_fields_patterns = vec!["-", "-,3", "3,-", "1,-,3", "- 3"];
+
+    for pattern in all_fields_patterns {
+        new_ucmd!()
+            .args(&["--from=auto", "--field", pattern, "1K 2K 3K 4K 5K 6K"])
+            .succeeds()
+            .stdout_only("1000 2000 3000 4000 5000 6000\n");
+    }
 }
 
 #[test]
@@ -428,7 +461,7 @@ fn test_delimiter_must_not_be_more_than_one_character() {
     new_ucmd!()
         .args(&["--delimiter", "sad"])
         .fails()
-        .stderr_is("numfmt: the delimiter must be a single character");
+        .stderr_is("numfmt: the delimiter must be a single character\n");
 }
 
 #[test]
@@ -525,12 +558,38 @@ fn test_round() {
         new_ucmd!()
             .args(&[
                 "--to=si",
-                &format!("--round={}", method),
+                &format!("--round={method}"),
                 "--",
                 "9001",
                 "-9001",
                 "9099",
                 "-9099",
+            ])
+            .succeeds()
+            .stdout_only(exp.join("\n") + "\n");
+    }
+}
+
+#[test]
+fn test_round_with_to_unit() {
+    for (method, exp) in [
+        ("from-zero", ["6", "-6", "5.9", "-5.9", "5.86", "-5.86"]),
+        ("towards-zero", ["5", "-5", "5.8", "-5.8", "5.85", "-5.85"]),
+        ("up", ["6", "-5", "5.9", "-5.8", "5.86", "-5.85"]),
+        ("down", ["5", "-6", "5.8", "-5.9", "5.85", "-5.86"]),
+        ("nearest", ["6", "-6", "5.9", "-5.9", "5.86", "-5.86"]),
+    ] {
+        new_ucmd!()
+            .args(&[
+                "--to-unit=1024",
+                &format!("--round={method}"),
+                "--",
+                "6000",
+                "-6000",
+                "6000.0",
+                "-6000.0",
+                "6000.00",
+                "-6000.00",
             ])
             .succeeds()
             .stdout_only(exp.join("\n") + "\n");
@@ -611,8 +670,79 @@ fn test_invalid_stdin_number_in_middle_of_input() {
 }
 
 #[test]
-fn test_invalid_argument_number_returns_status_2() {
-    new_ucmd!().args(&["hello"]).fails().code_is(2);
+fn test_invalid_stdin_number_with_warn_returns_status_0() {
+    new_ucmd!()
+        .args(&["--invalid=warn"])
+        .pipe_in("4Q")
+        .succeeds()
+        .stdout_is("4Q\n")
+        .stderr_is("numfmt: invalid suffix in input: '4Q'\n");
+}
+
+#[test]
+fn test_invalid_stdin_number_with_ignore_returns_status_0() {
+    new_ucmd!()
+        .args(&["--invalid=ignore"])
+        .pipe_in("4Q")
+        .succeeds()
+        .stdout_only("4Q\n");
+}
+
+#[test]
+fn test_invalid_stdin_number_with_abort_returns_status_2() {
+    new_ucmd!()
+        .args(&["--invalid=abort"])
+        .pipe_in("4Q")
+        .fails()
+        .code_is(2)
+        .stderr_only("numfmt: invalid suffix in input: '4Q'\n");
+}
+
+#[test]
+fn test_invalid_stdin_number_with_fail_returns_status_2() {
+    new_ucmd!()
+        .args(&["--invalid=fail"])
+        .pipe_in("4Q")
+        .fails()
+        .code_is(2)
+        .stdout_is("4Q\n")
+        .stderr_is("numfmt: invalid suffix in input: '4Q'\n");
+}
+
+#[test]
+fn test_invalid_arg_number_with_warn_returns_status_0() {
+    new_ucmd!()
+        .args(&["--invalid=warn", "4Q"])
+        .succeeds()
+        .stdout_is("4Q\n")
+        .stderr_is("numfmt: invalid suffix in input: '4Q'\n");
+}
+
+#[test]
+fn test_invalid_arg_number_with_ignore_returns_status_0() {
+    new_ucmd!()
+        .args(&["--invalid=ignore", "4Q"])
+        .succeeds()
+        .stdout_only("4Q\n");
+}
+
+#[test]
+fn test_invalid_arg_number_with_abort_returns_status_2() {
+    new_ucmd!()
+        .args(&["--invalid=abort", "4Q"])
+        .fails()
+        .code_is(2)
+        .stderr_only("numfmt: invalid suffix in input: '4Q'\n");
+}
+
+#[test]
+fn test_invalid_arg_number_with_fail_returns_status_2() {
+    new_ucmd!()
+        .args(&["--invalid=fail", "4Q"])
+        .fails()
+        .code_is(2)
+        .stdout_is("4Q\n")
+        .stderr_is("numfmt: invalid suffix in input: '4Q'\n");
 }
 
 #[test]
@@ -631,11 +761,11 @@ fn test_invalid_padding_value() {
 
     for padding_value in padding_values {
         new_ucmd!()
-            .arg(format!("--padding={}", padding_value))
+            .arg(format!("--padding={padding_value}"))
             .arg("5")
             .fails()
             .code_is(1)
-            .stderr_contains(format!("invalid padding value '{}'", padding_value));
+            .stderr_contains(format!("invalid padding value '{padding_value}'"));
     }
 }
 
@@ -663,10 +793,10 @@ fn test_invalid_unit_size() {
     for command in commands {
         for invalid_size in &invalid_sizes {
             new_ucmd!()
-                .arg(format!("--{}-unit={}", command, invalid_size))
+                .arg(format!("--{command}-unit={invalid_size}"))
                 .fails()
                 .code_is(1)
-                .stderr_contains(format!("invalid unit size: '{}'", invalid_size));
+                .stderr_contains(format!("invalid unit size: '{invalid_size}'"));
         }
     }
 }
@@ -681,8 +811,7 @@ fn test_valid_but_forbidden_suffix() {
             .fails()
             .code_is(2)
             .stderr_contains(format!(
-                "rejecting suffix in input: '{}' (consider using --from)",
-                number
+                "rejecting suffix in input: '{number}' (consider using --from)"
             ));
     }
 }
@@ -749,7 +878,7 @@ fn test_format_with_zero_padding() {
 
     for format in formats {
         new_ucmd!()
-            .args(&[format!("--format={}", format), String::from("1234")])
+            .args(&[format!("--format={format}"), String::from("1234")])
             .succeeds()
             .stdout_is("001234\n");
     }
@@ -795,7 +924,7 @@ fn test_format_with_precision() {
         new_ucmd!()
             .args(&["--format=%.1f", input])
             .succeeds()
-            .stdout_is(format!("{}\n", expected));
+            .stdout_is(format!("{expected}\n"));
     }
 
     let values = vec![("0.99", "0.99"), ("1", "1.00"), ("1.01", "1.01")];
@@ -804,7 +933,7 @@ fn test_format_with_precision() {
         new_ucmd!()
             .args(&["--format=%.2f", input])
             .succeeds()
-            .stdout_is(format!("{}\n", expected));
+            .stdout_is(format!("{expected}\n"));
     }
 }
 
@@ -816,7 +945,7 @@ fn test_format_with_precision_and_down_rounding() {
         new_ucmd!()
             .args(&["--format=%.1f", input, "--round=down"])
             .succeeds()
-            .stdout_is(format!("{}\n", expected));
+            .stdout_is(format!("{expected}\n"));
     }
 }
 
@@ -827,12 +956,12 @@ fn test_format_with_precision_and_to_arg() {
     for (format, expected) in values {
         new_ucmd!()
             .args(&[
-                format!("--format={}", format),
+                format!("--format={format}"),
                 "9991239123".to_string(),
                 "--to=si".to_string(),
             ])
             .succeeds()
-            .stdout_is(format!("{}\n", expected));
+            .stdout_is(format!("{expected}\n"));
     }
 }
 
@@ -844,7 +973,7 @@ fn test_format_preserve_trailing_zeros_if_no_precision_is_specified() {
         new_ucmd!()
             .args(&["--format=%f", value])
             .succeeds()
-            .stdout_is(format!("{}\n", value));
+            .stdout_is(format!("{value}\n"));
     }
 }
 
@@ -854,10 +983,10 @@ fn test_format_without_percentage_directive() {
 
     for invalid_format in invalid_formats {
         new_ucmd!()
-            .arg(format!("--format={}", invalid_format))
+            .arg(format!("--format={invalid_format}"))
             .fails()
             .code_is(1)
-            .stderr_contains(format!("format '{}' has no % directive", invalid_format));
+            .stderr_contains(format!("format '{invalid_format}' has no % directive"));
     }
 }
 
@@ -866,10 +995,10 @@ fn test_format_with_percentage_directive_at_end() {
     let invalid_format = "hello%";
 
     new_ucmd!()
-        .arg(format!("--format={}", invalid_format))
+        .arg(format!("--format={invalid_format}"))
         .fails()
         .code_is(1)
-        .stderr_contains(format!("format '{}' ends in %", invalid_format));
+        .stderr_contains(format!("format '{invalid_format}' ends in %"));
 }
 
 #[test]
@@ -877,12 +1006,11 @@ fn test_format_with_too_many_percentage_directives() {
     let invalid_format = "%f %f";
 
     new_ucmd!()
-        .arg(format!("--format={}", invalid_format))
+        .arg(format!("--format={invalid_format}"))
         .fails()
         .code_is(1)
         .stderr_contains(format!(
-            "format '{}' has too many % directives",
-            invalid_format
+            "format '{invalid_format}' has too many % directives"
         ));
 }
 
@@ -892,12 +1020,11 @@ fn test_format_with_invalid_format() {
 
     for invalid_format in invalid_formats {
         new_ucmd!()
-            .arg(format!("--format={}", invalid_format))
+            .arg(format!("--format={invalid_format}"))
             .fails()
             .code_is(1)
             .stderr_contains(format!(
-                "invalid format '{}', directive must be %[0]['][-][N][.][N]f",
-                invalid_format
+                "invalid format '{invalid_format}', directive must be %[0]['][-][N][.][N]f"
             ));
     }
 }
@@ -906,12 +1033,11 @@ fn test_format_with_invalid_format() {
 fn test_format_with_width_overflow() {
     let invalid_format = "%18446744073709551616f";
     new_ucmd!()
-        .arg(format!("--format={}", invalid_format))
+        .arg(format!("--format={invalid_format}"))
         .fails()
         .code_is(1)
         .stderr_contains(format!(
-            "invalid format '{}' (width overflow)",
-            invalid_format
+            "invalid format '{invalid_format}' (width overflow)"
         ));
 }
 
@@ -921,10 +1047,10 @@ fn test_format_with_invalid_precision() {
 
     for invalid_format in invalid_formats {
         new_ucmd!()
-            .arg(format!("--format={}", invalid_format))
+            .arg(format!("--format={invalid_format}"))
             .fails()
             .code_is(1)
-            .stderr_contains(format!("invalid precision in format '{}'", invalid_format));
+            .stderr_contains(format!("invalid precision in format '{invalid_format}'"));
     }
 }
 

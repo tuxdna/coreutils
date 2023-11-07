@@ -1,20 +1,13 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Benoit Benedetti <benoit.benedetti@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
-
-/* last synced with: logname (GNU coreutils) 8.22 */
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) getlogin userlogin
 
-#[macro_use]
-extern crate uucore;
-
 use clap::{crate_version, Command};
 use std::ffi::CStr;
-use uucore::error::UResult;
+use uucore::{error::UResult, format_usage, help_about, help_usage, show_error};
 
 extern "C" {
     // POSIX requires using getlogin (or equivalent code)
@@ -32,7 +25,8 @@ fn get_userlogin() -> Option<String> {
     }
 }
 
-static ABOUT: &str = "Print user's login name";
+const ABOUT: &str = help_about!("logname.md");
+const USAGE: &str = help_usage!("logname.md");
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
@@ -41,7 +35,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let _ = uu_app().try_get_matches_from(args)?;
 
     match get_userlogin() {
-        Some(userlogin) => println!("{}", userlogin),
+        Some(userlogin) => println!("{userlogin}"),
         None => show_error!("no login name"),
     }
 
@@ -51,7 +45,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
         .version(crate_version!())
-        .override_usage(uucore::execution_phrase())
+        .override_usage(format_usage(USAGE))
         .about(ABOUT)
         .infer_long_args(true)
 }

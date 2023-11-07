@@ -1,11 +1,9 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) allocs bset dflag cflag sflag tflag
-
-extern crate nom;
 
 mod convert;
 mod operation;
@@ -15,14 +13,15 @@ use clap::{crate_version, Arg, ArgAction, Command};
 use nom::AsBytes;
 use operation::{translate_input, Sequence, SqueezeOperation, TranslateOperation};
 use std::io::{stdin, stdout, BufReader, BufWriter};
-use uucore::{format_usage, show};
+use uucore::{format_usage, help_about, help_section, help_usage, show};
 
 use crate::operation::DeleteOperation;
 use uucore::display::Quotable;
 use uucore::error::{UResult, USimpleError, UUsageError};
 
-static ABOUT: &str = "translate or delete characters";
-const USAGE: &str = "{} [OPTION]... SET1 [SET2]";
+const ABOUT: &str = help_about!("tr.md");
+const AFTER_HELP: &str = help_section!("after help", "tr.md");
+const USAGE: &str = help_usage!("tr.md");
 
 mod options {
     pub const COMPLEMENT: &str = "complement";
@@ -32,19 +31,11 @@ mod options {
     pub const SETS: &str = "sets";
 }
 
-fn get_long_usage() -> String {
-    "Translate, squeeze, and/or delete characters from standard input, \
-     writing to standard output."
-        .to_string()
-}
-
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let args = args.collect_lossy();
 
-    let matches = uu_app()
-        .after_help(get_long_usage())
-        .try_get_matches_from(args)?;
+    let matches = uu_app().after_help(AFTER_HELP).try_get_matches_from(args)?;
 
     let delete_flag = matches.get_flag(options::DELETE);
     let complement_flag = matches.get_flag(options::COMPLEMENT);

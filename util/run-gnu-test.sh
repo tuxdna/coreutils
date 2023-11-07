@@ -1,8 +1,6 @@
 #!/bin/sh
 # `run-gnu-test.bash [TEST]`
 # run GNU test (or all tests if TEST is missing/null)
-#
-# UU_MAKE_PROFILE == 'debug' | 'release' ## build profile used for *uutils* build; may be supplied by caller, defaults to 'release'
 
 # spell-checker:ignore (env/vars) GNULIB SRCDIR SUBDIRS ; (utils) shellcheck
 
@@ -31,15 +29,27 @@ cd "${path_GNU}" && echo "[ pwd:'${PWD}' ]"
 
 export RUST_BACKTRACE=1
 
-if test $# -ge 1; then
-    # if set, run only the tests passed
-    SPECIFIC_TESTS=""
-    for t in "$@"; do
-        SPECIFIC_TESTS="$SPECIFIC_TESTS $t"
-    done
-    # trim it
-    SPECIFIC_TESTS=$(echo $SPECIFIC_TESTS| xargs)
-    echo "Running specific tests: $SPECIFIC_TESTS"
+if test "$1" != "run-root"; then
+    if test $# -ge 1; then
+        # if set, run only the tests passed
+        SPECIFIC_TESTS=""
+        for t in "$@"; do
+
+            # Construct the full path
+            full_path="$path_GNU/$t"
+
+            # Check if the file exists with .sh, .pl extension or without any extension in the $path_GNU directory
+            if [ -f "$full_path" ] || [ -f "$full_path.sh" ] || [ -f "$full_path.pl" ]; then
+                SPECIFIC_TESTS="$SPECIFIC_TESTS $t"
+            else
+                echo "Error: Test file $full_path, $full_path.sh, or $full_path.pl does not exist!"
+                exit 1
+            fi
+        done
+        # trim it
+        SPECIFIC_TESTS=$(echo $SPECIFIC_TESTS | xargs)
+        echo "Running specific tests: $SPECIFIC_TESTS"
+    fi
 fi
 
 # * timeout used to kill occasionally errant/"stuck" processes (note: 'release' testing takes ~1 hour; 'debug' testing takes ~2.5 hours)
@@ -48,14 +58,14 @@ fi
 #shellcheck disable=SC2086
 
 if test "$1" != "run-root"; then
-# run the regular tests
+    # run the regular tests
     if test $# -ge 1; then
         timeout -sKILL 4h make -j "$(nproc)" check TESTS="$SPECIFIC_TESTS" SUBDIRS=. RUN_EXPENSIVE_TESTS=yes RUN_VERY_EXPENSIVE_TESTS=yes VERBOSE=no gl_public_submodule_commit="" srcdir="${path_GNU}" || : # Kill after 4 hours in case something gets stuck in make
     else
         timeout -sKILL 4h make -j "$(nproc)" check SUBDIRS=. RUN_EXPENSIVE_TESTS=yes RUN_VERY_EXPENSIVE_TESTS=yes VERBOSE=no gl_public_submodule_commit="" srcdir="${path_GNU}" || : # Kill after 4 hours in case something gets stuck in make
     fi
 else
-# in case we would like to run tests requiring root
+    # in case we would like to run tests requiring root
     if test -z "$1" -o "$1" == "run-root"; then
         if test -n "$CI"; then
             echo "Running check-root to run only root tests"

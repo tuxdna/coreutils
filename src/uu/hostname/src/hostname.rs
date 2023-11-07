@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Alan Andrade <alan.andradec@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) MAKEWORD addrs hashset
 
@@ -16,11 +14,11 @@ use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 
 use uucore::{
     error::{FromIo, UResult},
-    format_usage,
+    format_usage, help_about, help_usage,
 };
 
-static ABOUT: &str = "Display or set the system's host name.";
-const USAGE: &str = "{} [OPTION]... [HOSTNAME]";
+const ABOUT: &str = help_about!("hostname.md");
+const USAGE: &str = help_usage!("hostname.md");
 
 static OPT_DOMAIN: &str = "domain";
 static OPT_IP_ADDRESS: &str = "ip-address";
@@ -32,20 +30,19 @@ static OPT_HOST: &str = "host";
 mod wsa {
     use std::io;
 
-    use winapi::shared::minwindef::MAKEWORD;
-    use winapi::um::winsock2::{WSACleanup, WSAStartup, WSADATA};
+    use windows_sys::Win32::Networking::WinSock::{WSACleanup, WSAStartup, WSADATA};
 
     pub(super) struct WsaHandle(());
 
     pub(super) fn start() -> io::Result<WsaHandle> {
         let err = unsafe {
             let mut data = std::mem::MaybeUninit::<WSADATA>::uninit();
-            WSAStartup(MAKEWORD(2, 2), data.as_mut_ptr())
+            WSAStartup(0x0202, data.as_mut_ptr())
         };
-        if err != 0 {
-            Err(io::Error::from_raw_os_error(err))
-        } else {
+        if err == 0 {
             Ok(WsaHandle(()))
+        } else {
+            Err(io::Error::from_raw_os_error(err))
         }
     }
 
@@ -82,7 +79,7 @@ pub fn uu_app() -> Command {
             Arg::new(OPT_DOMAIN)
                 .short('d')
                 .long("domain")
-                .overrides_with_all(&[OPT_DOMAIN, OPT_IP_ADDRESS, OPT_FQDN, OPT_SHORT])
+                .overrides_with_all([OPT_DOMAIN, OPT_IP_ADDRESS, OPT_FQDN, OPT_SHORT])
                 .help("Display the name of the DNS domain if possible")
                 .action(ArgAction::SetTrue),
         )
@@ -90,7 +87,7 @@ pub fn uu_app() -> Command {
             Arg::new(OPT_IP_ADDRESS)
                 .short('i')
                 .long("ip-address")
-                .overrides_with_all(&[OPT_DOMAIN, OPT_IP_ADDRESS, OPT_FQDN, OPT_SHORT])
+                .overrides_with_all([OPT_DOMAIN, OPT_IP_ADDRESS, OPT_FQDN, OPT_SHORT])
                 .help("Display the network address(es) of the host")
                 .action(ArgAction::SetTrue),
         )
@@ -98,7 +95,7 @@ pub fn uu_app() -> Command {
             Arg::new(OPT_FQDN)
                 .short('f')
                 .long("fqdn")
-                .overrides_with_all(&[OPT_DOMAIN, OPT_IP_ADDRESS, OPT_FQDN, OPT_SHORT])
+                .overrides_with_all([OPT_DOMAIN, OPT_IP_ADDRESS, OPT_FQDN, OPT_SHORT])
                 .help("Display the FQDN (Fully Qualified Domain Name) (default)")
                 .action(ArgAction::SetTrue),
         )
@@ -106,7 +103,7 @@ pub fn uu_app() -> Command {
             Arg::new(OPT_SHORT)
                 .short('s')
                 .long("short")
-                .overrides_with_all(&[OPT_DOMAIN, OPT_IP_ADDRESS, OPT_FQDN, OPT_SHORT])
+                .overrides_with_all([OPT_DOMAIN, OPT_IP_ADDRESS, OPT_FQDN, OPT_SHORT])
                 .help("Display the short hostname (the portion before the first dot) if possible")
                 .action(ArgAction::SetTrue),
         )
@@ -165,7 +162,7 @@ fn display_hostname(matches: &ArgMatches) -> UResult<()> {
             }
         }
 
-        println!("{}", hostname);
+        println!("{hostname}");
 
         Ok(())
     }

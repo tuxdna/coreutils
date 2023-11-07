@@ -1,8 +1,12 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (words) symdir somefakedir
 
 use std::path::PathBuf;
 
-use crate::common::util::*;
+use crate::common::util::{TestScenario, UCommand};
 
 #[test]
 fn test_invalid_arg() {
@@ -27,7 +31,7 @@ fn test_deleted_dir() {
     use std::process::Command;
 
     let ts = TestScenario::new(util_name!());
-    let at = ts.fixtures.clone();
+    let at = ts.fixtures;
     let output = Command::new("sh")
         .arg("-c")
         .arg(format!(
@@ -60,7 +64,7 @@ fn symlinked_env() -> Env {
     // Note: on Windows this requires admin permissions
     at.symlink_dir("subdir", "symdir");
     let root = PathBuf::from(at.root_dir_resolved());
-    ucmd.raw.current_dir(root.join("symdir"));
+    ucmd.current_dir(root.join("symdir"));
     #[cfg(not(windows))]
     ucmd.env("PWD", root.join("symdir"));
     Env {
@@ -88,6 +92,35 @@ fn test_symlinked_physical() {
 fn test_symlinked_default() {
     let mut env = symlinked_env();
     env.ucmd.succeeds().stdout_is(env.subdir + "\n");
+}
+
+#[test]
+fn test_symlinked_default_posix() {
+    let mut env = symlinked_env();
+    env.ucmd
+        .env("POSIXLY_CORRECT", "1")
+        .succeeds()
+        .stdout_is(env.symdir.clone() + "\n");
+}
+
+#[test]
+fn test_symlinked_default_posix_l() {
+    let mut env = symlinked_env();
+    env.ucmd
+        .env("POSIXLY_CORRECT", "1")
+        .arg("-L")
+        .succeeds()
+        .stdout_is(env.symdir + "\n");
+}
+
+#[test]
+fn test_symlinked_default_posix_p() {
+    let mut env = symlinked_env();
+    env.ucmd
+        .env("POSIXLY_CORRECT", "1")
+        .arg("-P")
+        .succeeds()
+        .stdout_is(env.subdir + "\n");
 }
 
 #[cfg(not(windows))]

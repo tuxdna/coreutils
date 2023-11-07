@@ -1,7 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jian Zeng <anonymousknight96@gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -18,7 +16,7 @@ use std::ffi::CStr;
 use std::fmt::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
 mod options {
     pub const ALL: &str = "all";
@@ -38,8 +36,8 @@ mod options {
     pub const FILE: &str = "FILE"; // if length=1: FILE, if length=2: ARG1 ARG2
 }
 
-static ABOUT: &str = "Print information about users who are currently logged in.";
-const USAGE: &str = "{} [OPTION]... [ FILE | ARG1 ARG2 ]";
+const ABOUT: &str = help_about!("who.md");
+const USAGE: &str = help_usage!("who.md");
 
 #[cfg(target_os = "linux")]
 static RUNLEVEL_HELP: &str = "print current runlevel";
@@ -250,7 +248,7 @@ pub fn uu_app() -> Command {
                 .long(options::MESG)
                 .short('T')
                 .visible_short_alias('w')
-                .visible_aliases(&["message", "writable"])
+                .visible_aliases(["message", "writable"])
                 .help("add user's message status as +, - or ?")
                 .action(ArgAction::SetTrue),
         )
@@ -316,18 +314,19 @@ fn time_string(ut: &Utmpx) -> String {
 fn current_tty() -> String {
     unsafe {
         let res = ttyname(STDIN_FILENO);
-        if !res.is_null() {
+        if res.is_null() {
+            String::new()
+        } else {
             CStr::from_ptr(res as *const _)
                 .to_string_lossy()
                 .trim_start_matches("/dev/")
                 .to_owned()
-        } else {
-            "".to_owned()
         }
     }
 }
 
 impl Who {
+    #[allow(clippy::cognitive_complexity)]
     fn exec(&mut self) -> UResult<()> {
         let run_level_chk = |_record: i16| {
             #[cfg(not(target_os = "linux"))]
@@ -350,7 +349,7 @@ impl Who {
             println!("{}", users.join(" "));
             println!("# users={}", users.len());
         } else {
-            let records = Utmpx::iter_all_records_from(f).peekable();
+            let records = Utmpx::iter_all_records_from(f);
 
             if self.include_heading {
                 self.print_heading();
@@ -358,7 +357,7 @@ impl Who {
             let cur_tty = if self.my_line_only {
                 current_tty()
             } else {
-                "".to_owned()
+                String::new()
             };
 
             for ut in records {
@@ -392,7 +391,7 @@ impl Who {
     fn print_runlevel(&self, ut: &Utmpx) {
         let last = (ut.pid() / 256) as u8 as char;
         let curr = (ut.pid() % 256) as u8 as char;
-        let runlvline = format!("run-level {}", curr);
+        let runlvline = format!("run-level {curr}");
         let comment = format!("last={}", if last == 'N' { 'S' } else { 'N' });
 
         self.print_line(
@@ -402,7 +401,7 @@ impl Who {
             &time_string(ut),
             "",
             "",
-            if !last.is_control() { &comment } else { "" },
+            if last.is_control() { "" } else { &comment },
             "",
         );
     }
@@ -474,11 +473,15 @@ impl Who {
         let last_change;
         match p.metadata() {
             Ok(meta) => {
-                mesg = if meta.mode() & (S_IWGRP as u32) != 0 {
-                    '+'
-                } else {
-                    '-'
-                };
+                #[cfg(all(
+                    not(target_os = "android"),
+                    not(target_os = "freebsd"),
+                    not(target_vendor = "apple")
+                ))]
+                let iwgrp = S_IWGRP;
+                #[cfg(any(target_os = "android", target_os = "freebsd", target_vendor = "apple"))]
+                let iwgrp = S_IWGRP as u32;
+                mesg = if meta.mode() & iwgrp == 0 { '-' } else { '+' };
                 last_change = meta.atime();
             }
             _ => {
@@ -487,10 +490,10 @@ impl Who {
             }
         }
 
-        let idle = if last_change != 0 {
-            idle_string(last_change, 0)
-        } else {
+        let idle = if last_change == 0 {
             "  ?".into()
+        } else {
+            idle_string(last_change, 0)
         };
 
         let s = if self.do_lookup {
@@ -504,7 +507,7 @@ impl Who {
         } else {
             ut.host()
         };
-        let hoststr = if s.is_empty() { s } else { format!("({})", s) };
+        let hoststr = if s.is_empty() { s } else { format!("({s})") };
 
         self.print_line(
             ut.user().as_ref(),
@@ -535,24 +538,24 @@ impl Who {
         let mut buf = String::with_capacity(64);
         let msg = vec![' ', state].into_iter().collect::<String>();
 
-        write!(buf, "{:<8}", user).unwrap();
+        write!(buf, "{user:<8}").unwrap();
         if self.include_mesg {
             buf.push_str(&msg);
         }
-        write!(buf, " {:<12}", line).unwrap();
+        write!(buf, " {line:<12}").unwrap();
         // "%b %e %H:%M" (LC_ALL=C)
         let time_size = 3 + 2 + 2 + 1 + 2;
-        write!(buf, " {:<1$}", time, time_size).unwrap();
+        write!(buf, " {time:<time_size$}").unwrap();
 
         if !self.short_output {
             if self.include_idle {
-                write!(buf, " {:<6}", idle).unwrap();
+                write!(buf, " {idle:<6}").unwrap();
             }
-            write!(buf, " {:>10}", pid).unwrap();
+            write!(buf, " {pid:>10}").unwrap();
         }
-        write!(buf, " {:<8}", comment).unwrap();
+        write!(buf, " {comment:<8}").unwrap();
         if self.include_exit {
-            write!(buf, " {:<12}", exit).unwrap();
+            write!(buf, " {exit:<12}").unwrap();
         }
         println!("{}", buf.trim_end());
     }

@@ -1,6 +1,10 @@
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 // spell-checker:ignore (words) gpghome
 
-use crate::common::util::*;
+use crate::common::util::TestScenario;
 
 use uucore::display::Quotable;
 
@@ -425,7 +429,7 @@ fn test_mktemp_tmpdir_one_arg() {
     let scene = TestScenario::new(util_name!());
 
     let result = scene
-        .ucmd_keepenv()
+        .ucmd()
         .arg("--tmpdir")
         .arg("apt-key-gpghome.XXXXXXXXXX")
         .succeeds();
@@ -438,7 +442,7 @@ fn test_mktemp_directory_tmpdir() {
     let scene = TestScenario::new(util_name!());
 
     let result = scene
-        .ucmd_keepenv()
+        .ucmd()
         .arg("--directory")
         .arg("--tmpdir")
         .arg("apt-key-gpghome.XXXXXXXXXX")
@@ -473,8 +477,7 @@ fn test_tmpdir_absolute_path() {
         .args(&["--tmpdir=a", path])
         .fails()
         .stderr_only(format!(
-            "mktemp: invalid template, '{}'; with --tmpdir, it may not be absolute\n",
-            path
+            "mktemp: invalid template, '{path}'; with --tmpdir, it may not be absolute\n"
         ));
 }
 
@@ -567,6 +570,32 @@ fn test_template_path_separator() {
         .stderr_only(format!(
             "mktemp: invalid template, {}, contains directory separator\n",
             r"a\bXXX".quote()
+        ));
+}
+
+/// Test that a prefix with a point is valid.
+#[test]
+fn test_prefix_template_separator() {
+    new_ucmd!().args(&["-p", ".", "-t", "a.XXXX"]).succeeds();
+}
+
+#[test]
+fn test_prefix_template_with_path_separator() {
+    #[cfg(not(windows))]
+    new_ucmd!()
+        .args(&["-t", "a/XXX"])
+        .fails()
+        .stderr_only(format!(
+            "mktemp: invalid template, {}, contains directory separator\n",
+            "a/XXX".quote()
+        ));
+    #[cfg(windows)]
+    new_ucmd!()
+        .args(&["-t", r"a\XXX"])
+        .fails()
+        .stderr_only(format!(
+            "mktemp: invalid template, {}, contains directory separator\n",
+            r"a\XXX".quote()
         ));
 }
 
@@ -673,11 +702,7 @@ fn test_mktemp_with_posixly_correct() {
         .env("POSIXLY_CORRECT", "1")
         .args(&["aXXXX", "--suffix=b"])
         .fails()
-        .stderr_is(&format!(
-            "mktemp: too many templates\nTry '{} {} --help' for more information.\n",
-            scene.bin_path.to_string_lossy(),
-            scene.util_name
-        ));
+        .usage_error("too many templates");
 
     scene
         .ucmd()
@@ -695,7 +720,7 @@ fn test_tmpdir_env_var() {
     let filename = result.no_stderr().stdout_str().trim_end();
     #[cfg(not(windows))]
     {
-        let template = format!(".{}tmp.XXXXXXXXXX", MAIN_SEPARATOR);
+        let template = format!(".{MAIN_SEPARATOR}tmp.XXXXXXXXXX");
         assert_matches_template!(&template, filename);
     }
     // On Windows, `env::temp_dir()` seems to give an absolute path
@@ -707,16 +732,18 @@ fn test_tmpdir_env_var() {
     assert_suffix_matches_template!("tmp.XXXXXXXXXX", filename);
     assert!(at.file_exists(filename));
 
-    // FIXME This is not working because --tmpdir is configured to
-    // require a value.
-    //
-    // // `TMPDIR=. mktemp --tmpdir`
-    // let (at, mut ucmd) = at_and_ucmd!();
-    // let result = ucmd.env(TMPDIR, ".").arg("--tmpdir").succeeds();
-    // let filename = result.no_stderr().stdout_str().trim_end();
-    // let template = format!(".{}tmp.XXXXXXXXXX", MAIN_SEPARATOR);
-    // assert_matches_template!(&template, filename);
-    // assert!(at.file_exists(filename));
+    // `TMPDIR=. mktemp --tmpdir`
+    let (at, mut ucmd) = at_and_ucmd!();
+    let result = ucmd.env(TMPDIR, ".").arg("--tmpdir").succeeds();
+    let filename = result.no_stderr().stdout_str().trim_end();
+    #[cfg(not(windows))]
+    {
+        let template = format!(".{MAIN_SEPARATOR}tmp.XXXXXXXXXX");
+        assert_matches_template!(&template, filename);
+    }
+    #[cfg(windows)]
+    assert_suffix_matches_template!("tmp.XXXXXXXXXX", filename);
+    assert!(at.file_exists(filename));
 
     // `TMPDIR=. mktemp --tmpdir XXX`
     let (at, mut ucmd) = at_and_ucmd!();
@@ -724,7 +751,7 @@ fn test_tmpdir_env_var() {
     let filename = result.no_stderr().stdout_str().trim_end();
     #[cfg(not(windows))]
     {
-        let template = format!(".{}XXX", MAIN_SEPARATOR);
+        let template = format!(".{MAIN_SEPARATOR}XXX");
         assert_matches_template!(&template, filename);
     }
     #[cfg(windows)]
@@ -824,4 +851,136 @@ fn test_nonexistent_dir_prefix() {
             stderr
         );
     }
+}
+
+#[test]
+fn test_default_missing_value() {
+    new_ucmd!().arg("-d").arg("--tmpdir").succeeds();
+}
+
+#[test]
+fn test_default_issue_4821_t_tmpdir() {
+    let scene = TestScenario::new(util_name!());
+    let pathname = scene.fixtures.as_string();
+    let result = scene
+        .ucmd()
+        .env(TMPDIR, &pathname)
+        .arg("-t")
+        .arg("foo.XXXX")
+        .succeeds();
+    let stdout = result.stdout_str();
+    println!("stdout = {stdout}");
+    assert!(stdout.contains(&pathname));
+}
+
+#[test]
+fn test_default_issue_4821_t_tmpdir_p() {
+    let scene = TestScenario::new(util_name!());
+    let pathname = scene.fixtures.as_string();
+    let result = scene
+        .ucmd()
+        .arg("-t")
+        .arg("-p")
+        .arg(&pathname)
+        .arg("foo.XXXX")
+        .succeeds();
+    let stdout = result.stdout_str();
+    println!("stdout = {stdout}");
+    assert!(stdout.contains(&pathname));
+}
+
+#[test]
+fn test_t_ensure_tmpdir_has_higher_priority_than_p() {
+    let scene = TestScenario::new(util_name!());
+    let pathname = scene.fixtures.as_string();
+    let result = scene
+        .ucmd()
+        .env(TMPDIR, &pathname)
+        .arg("-t")
+        .arg("-p")
+        .arg("should_not_attempt_to_write_in_this_nonexisting_dir")
+        .arg("foo.XXXX")
+        .succeeds();
+    let stdout = result.stdout_str();
+    println!("stdout = {stdout}");
+    assert!(stdout.contains(&pathname));
+}
+
+#[test]
+fn test_missing_xs_tmpdir_template() {
+    let scene = TestScenario::new(util_name!());
+    scene
+        .ucmd()
+        .arg("--tmpdir")
+        .arg(TEST_TEMPLATE3)
+        .fails()
+        .no_stdout()
+        .stderr_contains("too few X's in template");
+    scene
+        .ucmd()
+        .arg("--tmpdir=foobar")
+        .fails()
+        .no_stdout()
+        .stderr_contains("failed to create file via template");
+}
+
+#[test]
+fn test_both_tmpdir_flags_present() {
+    let scene = TestScenario::new(util_name!());
+
+    #[cfg(not(windows))]
+    let template = format!(".{MAIN_SEPARATOR}foobarXXXX");
+
+    let (at, mut ucmd) = at_and_ucmd!();
+    let result = ucmd
+        .env(TMPDIR, ".")
+        .arg("-p")
+        .arg("nonsense")
+        .arg("--tmpdir")
+        .arg("foobarXXXX")
+        .succeeds();
+    let filename = result.no_stderr().stdout_str().trim_end();
+
+    #[cfg(not(windows))]
+    assert_matches_template!(&template, filename);
+    #[cfg(windows)]
+    assert_suffix_matches_template!("foobarXXXX", filename);
+
+    assert!(at.file_exists(filename));
+
+    scene
+        .ucmd()
+        .arg("-p")
+        .arg(".")
+        .arg("--tmpdir=does_not_exist")
+        .fails()
+        .no_stdout()
+        .stderr_contains("failed to create file via template");
+
+    let (at, mut ucmd) = at_and_ucmd!();
+    let result = ucmd
+        .arg("--tmpdir")
+        .arg("foobarXXXX")
+        .arg("-p")
+        .arg(".")
+        .succeeds();
+    let filename = result.no_stderr().stdout_str().trim_end();
+
+    #[cfg(not(windows))]
+    assert_matches_template!(&template, filename);
+    #[cfg(windows)]
+    assert_suffix_matches_template!("foobarXXXX", filename);
+
+    assert!(at.file_exists(filename));
+}
+
+#[test]
+fn test_missing_short_tmpdir_flag() {
+    let scene = TestScenario::new(util_name!());
+    scene
+        .ucmd()
+        .arg("-p")
+        .fails()
+        .no_stdout()
+        .stderr_contains("a value is required for '-p <DIR>' but none was supplied");
 }

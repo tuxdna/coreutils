@@ -1,9 +1,7 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Dorota Kapturkiewicz <dokaptur@gmail.com>
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDOs) corasick memchr Roff trunc oset iset CHARCLASS
 
@@ -19,17 +17,10 @@ use std::io::{stdin, stdout, BufRead, BufReader, BufWriter, Read, Write};
 use std::num::ParseIntError;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UError, UResult};
-use uucore::format_usage;
+use uucore::{format_usage, help_about, help_usage};
 
-static NAME: &str = "ptx";
-const USAGE: &str = "\
-    {} [OPTION]... [INPUT]...
-    {} -G [OPTION]... [INPUT [OUTPUT]]";
-
-const ABOUT: &str = "\
-    Output a permuted index, including context, of the words in the input files. \n\n\
-    Mandatory arguments to long options are mandatory for short options too.\n\
-    With no FILE, or when FILE is -, read standard input. Default is '-F /'.";
+const USAGE: &str = help_usage!("ptx.md");
+const ABOUT: &str = help_about!("ptx.md");
 
 const REGEX_CHARCLASS: &str = "^-]\\";
 
@@ -114,6 +105,7 @@ struct WordFilter {
 }
 
 impl WordFilter {
+    #[allow(clippy::cognitive_complexity)]
     fn new(matches: &clap::ArgMatches, config: &Config) -> UResult<Self> {
         let (o, oset): (bool, HashSet<String>) = if matches.contains_id(options::ONLY_FILE) {
             let words =
@@ -171,12 +163,11 @@ impl WordFilter {
                             .unwrap()
                             .into_iter()
                             .map(|c| if REGEX_CHARCLASS.contains(c) {
-                                format!("\\{}", c)
+                                format!("\\{c}")
                             } else {
                                 c.to_string()
                             })
-                            .collect::<Vec<String>>()
-                            .join("")
+                            .collect::<String>()
                     )
                 } else if config.gnu_ext {
                     "\\w+".to_owned()
@@ -221,14 +212,14 @@ impl Display for PtxError {
             Self::DumbFormat => {
                 write!(f, "There is no dumb format with GNU extensions disabled")
             }
-            Self::NotImplemented(s) => write!(f, "{} not implemented yet", s),
+            Self::NotImplemented(s) => write!(f, "{s} not implemented yet"),
             Self::ParseError(e) => e.fmt(f),
         }
     }
 }
 
 fn get_config(matches: &clap::ArgMatches) -> UResult<Config> {
-    let mut config: Config = Default::default();
+    let mut config = Config::default();
     let err_msg = "parsing options failed";
     if matches.get_flag(options::TRADITIONAL) {
         config.gnu_ext = false;
@@ -331,7 +322,7 @@ fn create_word_set(config: &Config, filter: &WordFilter, file_map: &FileMap) -> 
     let reg = Regex::new(&filter.word_regex).unwrap();
     let ref_reg = Regex::new(&config.context_regex).unwrap();
     let mut word_set: BTreeSet<WordRef> = BTreeSet::new();
-    for (file, lines) in file_map.iter() {
+    for (file, lines) in file_map {
         let mut count: usize = 0;
         let offs = lines.offset;
         for line in &lines.lines {
@@ -439,7 +430,7 @@ fn get_output_chunks(
 ) -> (String, String, String, String) {
     // Chunk size logics are mostly copied from the GNU ptx source.
     // https://github.com/MaiZure/coreutils-8.3/blob/master/src/ptx.c#L1234
-    let half_line_size = (config.line_width / 2) as usize;
+    let half_line_size = config.line_width / 2;
     let max_before_size = cmp::max(half_line_size as isize - config.gap_size as isize, 0) as usize;
     let max_after_size = cmp::max(
         half_line_size as isize
@@ -500,7 +491,7 @@ fn get_output_chunks(
     let (tail_beg, _) = trim_idx(all_after, after_end, all_after.len());
 
     // end = begin + max length
-    let tail_end = cmp::min(all_after.len(), tail_beg + max_tail_size) as usize;
+    let tail_end = cmp::min(all_after.len(), tail_beg + max_tail_size);
     // in case that falls in the middle of a word, trim away the word.
     let tail_end = trim_broken_word_right(all_after, tail_beg, tail_end);
 
@@ -554,8 +545,8 @@ fn get_output_chunks(
 fn tex_mapper(x: char) -> String {
     match x {
         '\\' => "\\backslash{}".to_owned(),
-        '$' | '%' | '#' | '&' | '_' => format!("\\{}", x),
-        '}' | '{' => format!("$\\{}$", x),
+        '$' | '%' | '#' | '&' | '_' => format!("\\{x}"),
+        '}' | '{' => format!("$\\{x}$"),
         _ => x.to_string(),
     }
 }
@@ -663,7 +654,7 @@ fn write_traditional_output(
 
     let context_reg = Regex::new(&config.context_regex).unwrap();
 
-    for word_ref in words.iter() {
+    for word_ref in words {
         let file_map_value: &FileContent = file_map
             .get(&(word_ref.filename))
             .expect("Missing file in file map");
@@ -697,7 +688,7 @@ fn write_traditional_output(
                 return Err(PtxError::DumbFormat.into());
             }
         };
-        writeln!(writer, "{}", output_line).map_err_context(String::new)?;
+        writeln!(writer, "{output_line}").map_err_context(String::new)?;
     }
     Ok(())
 }
@@ -729,7 +720,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches = uu_app().try_get_matches_from(args)?;
 
     let mut input_files: Vec<String> = match &matches.get_many::<String>(options::FILE) {
-        Some(v) => v.clone().map(|v| v.to_owned()).collect(),
+        Some(v) => v.clone().cloned().collect(),
         None => vec!["-".to_string()],
     };
 
@@ -747,7 +738,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
-        .name(NAME)
         .about(ABOUT)
         .version(crate_version!())
         .override_usage(format_usage(USAGE))

@@ -1,7 +1,5 @@
 // This file is part of the uutils coreutils package.
 //
-// (c) Jimmy Lu <jimmy.lu.2011@gmail.com>
-//
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
@@ -11,13 +9,12 @@ use clap::{crate_version, Arg, ArgAction, Command};
 use std::path::{is_separator, PathBuf};
 use uucore::display::Quotable;
 use uucore::error::{UResult, UUsageError};
-use uucore::format_usage;
+use uucore::line_ending::LineEnding;
+use uucore::{format_usage, help_about, help_usage};
 
-static ABOUT: &str = r#"Print NAME with any leading directory components removed
-If specified, also remove a trailing SUFFIX"#;
+static ABOUT: &str = help_about!("basename.md");
 
-const USAGE: &str = "{} NAME [SUFFIX]
-    {} OPTION... NAME...";
+const USAGE: &str = help_usage!("basename.md");
 
 pub mod options {
     pub static MULTIPLE: &str = "multiple";
@@ -56,9 +53,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         return Err(UUsageError::new(1, "missing operand".to_string()));
     }
 
+    let line_ending = LineEnding::from_zero_flag(matches.get_flag(options::ZERO));
+
     let opt_suffix = matches.get_one::<String>(options::SUFFIX).is_some();
     let opt_multiple = matches.get_flag(options::MULTIPLE);
-    let opt_zero = matches.get_flag(options::ZERO);
     let multiple_paths = opt_suffix || opt_multiple;
     let name_args_count = matches
         .get_many::<String>(options::NAME)
@@ -107,7 +105,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             .collect()
     };
 
-    let line_ending = if opt_zero { "\0" } else { "\n" };
     for path in paths {
         print!("{}{}", basename(path, suffix), line_ending);
     }
@@ -172,6 +169,6 @@ fn basename(fullname: &str, suffix: &str) -> String {
             }
         }
 
-        None => "".to_owned(),
+        None => String::new(),
     }
 }

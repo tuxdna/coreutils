@@ -1,4 +1,4 @@
-# spell-checker:ignore (misc) testsuite runtest findstring (targets) busytest distclean pkgs ; (vars/env) BINDIR BUILDDIR CARGOFLAGS DESTDIR DOCSDIR INSTALLDIR INSTALLEES MULTICALL DATAROOTDIR
+# spell-checker:ignore (misc) testsuite runtest findstring (targets) busytest toybox distclean pkgs nextest ; (vars/env) BINDIR BUILDDIR CARGOFLAGS DESTDIR DOCSDIR INSTALLDIR INSTALLEES MULTICALL DATAROOTDIR TESTDIR manpages
 
 # Config options
 PROFILE         ?= debug
@@ -38,8 +38,12 @@ PKG_BUILDDIR  := $(BUILDDIR)/deps
 DOCSDIR       := $(BASEDIR)/docs
 
 BUSYBOX_ROOT := $(BASEDIR)/tmp
-BUSYBOX_VER  := 1.32.1
+BUSYBOX_VER  := 1.35.0
 BUSYBOX_SRC  := $(BUSYBOX_ROOT)/busybox-$(BUSYBOX_VER)
+
+TOYBOX_ROOT := $(BASEDIR)/tmp
+TOYBOX_VER  := 0.8.8
+TOYBOX_SRC  := $(TOYBOX_ROOT)/toybox-$(TOYBOX_VER)
 
 ifeq ($(SELINUX_ENABLED),)
 	SELINUX_ENABLED := 0
@@ -98,7 +102,6 @@ PROGS       := \
 	pwd \
 	readlink \
 	realpath \
-	relpath \
 	rm \
 	rmdir \
 	seq \
@@ -285,6 +288,21 @@ $(foreach test,$(filter-out $(SKIP_UTILS),$(PROGS)),$(eval $(call TEST_BUSYBOX,$
 test:
 	${CARGO} test ${CARGOFLAGS} --features "$(TESTS) $(TEST_SPEC_FEATURE)" --no-default-features $(TEST_NO_FAIL_FAST)
 
+nextest:
+	${CARGO} nextest run ${CARGOFLAGS} --features "$(TESTS) $(TEST_SPEC_FEATURE)" --no-default-features $(TEST_NO_FAIL_FAST)
+
+test_toybox:
+	-(cd $(TOYBOX_SRC)/ && make tests)
+
+toybox-src:
+	if [ ! -e "$(TOYBOX_SRC)" ] ; then \
+		mkdir -p "$(TOYBOX_ROOT)" ; \
+		wget "https://github.com/landley/toybox/archive/refs/tags/$(TOYBOX_VER).tar.gz" -P "$(TOYBOX_ROOT)" ; \
+		tar -C "$(TOYBOX_ROOT)" -xf "$(TOYBOX_ROOT)/$(TOYBOX_VER).tar.gz" ; \
+		sed -i -e "s|TESTDIR=\".*\"|TESTDIR=\"$(BUILDDIR)\"|g" $(TOYBOX_SRC)/scripts/test.sh; \
+		sed -i -e "s/ || exit 1//g" $(TOYBOX_SRC)/scripts/test.sh; \
+	fi ;
+
 busybox-src:
 	if [ ! -e "$(BUSYBOX_SRC)" ] ; then \
 		mkdir -p "$(BUSYBOX_ROOT)" ; \
@@ -318,7 +336,21 @@ clean:
 distclean: clean
 	$(CARGO) clean $(CARGOFLAGS) && $(CARGO) update $(CARGOFLAGS)
 
-install: build
+manpages: build-coreutils
+	mkdir -p $(BUILDDIR)/man/
+	$(foreach prog, $(INSTALLEES), \
+		$(BUILDDIR)/coreutils manpage $(prog) > $(BUILDDIR)/man/$(PROG_PREFIX)$(prog).1; \
+	)
+
+completions: build-coreutils
+	mkdir -p $(BUILDDIR)/completions/zsh $(BUILDDIR)/completions/bash $(BUILDDIR)/completions/fish
+	$(foreach prog, $(INSTALLEES), \
+		$(BUILDDIR)/coreutils completion $(prog) zsh > $(BUILDDIR)/completions/zsh/_$(PROG_PREFIX)$(prog); \
+		$(BUILDDIR)/coreutils completion $(prog) bash > $(BUILDDIR)/completions/bash/$(PROG_PREFIX)$(prog); \
+		$(BUILDDIR)/coreutils completion $(prog) fish > $(BUILDDIR)/completions/fish/$(PROG_PREFIX)$(prog).fish; \
+	)
+
+install: build manpages completions
 	mkdir -p $(INSTALLDIR_BIN)
 ifeq (${MULTICALL}, y)
 	$(INSTALL) $(BUILDDIR)/coreutils $(INSTALLDIR_BIN)/$(PROG_PREFIX)coreutils
@@ -330,13 +362,18 @@ else
 		$(INSTALL) $(BUILDDIR)/$(prog) $(INSTALLDIR_BIN)/$(PROG_PREFIX)$(prog);)
 	$(if $(findstring test,$(INSTALLEES)), $(INSTALL) $(BUILDDIR)/test $(INSTALLDIR_BIN)/$(PROG_PREFIX)[)
 endif
+	mkdir -p $(DESTDIR)$(DATAROOTDIR)/man/man1
+	$(foreach prog, $(INSTALLEES), \
+		$(INSTALL) $(BUILDDIR)/man/$(PROG_PREFIX)$(prog).1 $(DESTDIR)$(DATAROOTDIR)/man/man1/; \
+	)
+
 	mkdir -p $(DESTDIR)$(DATAROOTDIR)/zsh/site-functions
 	mkdir -p $(DESTDIR)$(DATAROOTDIR)/bash-completion/completions
 	mkdir -p $(DESTDIR)$(DATAROOTDIR)/fish/vendor_completions.d
 	$(foreach prog, $(INSTALLEES), \
-		$(BUILDDIR)/coreutils completion $(prog) zsh > $(DESTDIR)$(DATAROOTDIR)/zsh/site-functions/_$(PROG_PREFIX)$(prog); \
-		$(BUILDDIR)/coreutils completion $(prog) bash > $(DESTDIR)$(DATAROOTDIR)/bash-completion/completions/$(PROG_PREFIX)$(prog); \
-		$(BUILDDIR)/coreutils completion $(prog) fish > $(DESTDIR)$(DATAROOTDIR)/fish/vendor_completions.d/$(PROG_PREFIX)$(prog).fish; \
+		$(INSTALL) $(BUILDDIR)/completions/zsh/_$(PROG_PREFIX)$(prog) $(DESTDIR)$(DATAROOTDIR)/zsh/site-functions/; \
+		$(INSTALL) $(BUILDDIR)/completions/bash/$(PROG_PREFIX)$(prog) $(DESTDIR)$(DATAROOTDIR)/bash-completion/completions/; \
+		$(INSTALL) $(BUILDDIR)/completions/fish/$(PROG_PREFIX)$(prog).fish $(DESTDIR)$(DATAROOTDIR)/fish/vendor_completions.d/; \
 	)
 
 uninstall:
@@ -348,5 +385,6 @@ endif
 	rm -f $(addprefix $(DESTDIR)$(DATAROOTDIR)/zsh/site-functions/_$(PROG_PREFIX),$(PROGS))
 	rm -f $(addprefix $(DESTDIR)$(DATAROOTDIR)/bash-completion/completions/$(PROG_PREFIX),$(PROGS))
 	rm -f $(addprefix $(DESTDIR)$(DATAROOTDIR)/fish/vendor_completions.d/$(PROG_PREFIX),$(addsuffix .fish,$(PROGS)))
+	rm -f $(addprefix $(DESTDIR)$(DATAROOTDIR)/man/man1/$(PROG_PREFIX),$(addsuffix .1,$(PROGS)))
 
 .PHONY: all build build-coreutils build-pkgs test distclean clean busytest install uninstall

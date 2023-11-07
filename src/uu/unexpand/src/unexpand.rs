@@ -1,16 +1,10 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * (c) Virgile Andreani <virgile.andreani@anbuco.fr>
-//  * (c) kwantam <kwantam@gmail.com>
-//  *     * 2015-04-28 ~ updated to work with both UTF-8 and non-UTF-8 encodings
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
 // spell-checker:ignore (ToDO) nums aflag uflag scol prevtab amode ctype cwidth nbytes lastcol pctype Preprocess
 
-#[macro_use]
-extern crate uucore;
 use clap::{crate_version, Arg, ArgAction, Command};
 use std::error::Error;
 use std::fmt;
@@ -21,12 +15,10 @@ use std::str::from_utf8;
 use unicode_width::UnicodeWidthChar;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UError, UResult};
-use uucore::format_usage;
+use uucore::{crash, crash_if_err, format_usage, help_about, help_usage};
 
-static NAME: &str = "unexpand";
-static USAGE: &str = "{} [OPTION]... [FILE]...";
-static ABOUT: &str = r#"Convert blanks in each FILE to tabs, writing to standard output.
-                        With no FILE, or when FILE is -, read standard input."#;
+const USAGE: &str = help_usage!("unexpand.md");
+const ABOUT: &str = help_about!("unexpand.md");
 
 const DEFAULT_TABSTOP: usize = 8;
 
@@ -145,7 +137,7 @@ fn expand_shortcuts(args: &[String]) -> Vec<String> {
             arg[1..]
                 .split(',')
                 .filter(|s| !s.is_empty())
-                .for_each(|s| processed_args.push(format!("--tabs={}", s)));
+                .for_each(|s| processed_args.push(format!("--tabs={s}")));
             has_shortcuts = true;
         } else {
             processed_args.push(arg.to_string());
@@ -174,7 +166,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
 pub fn uu_app() -> Command {
     Command::new(uucore::util_name())
-        .name(NAME)
         .version(crate_version!())
         .override_usage(format_usage(USAGE))
         .about(ABOUT)
@@ -323,6 +314,7 @@ fn next_char_info(uflag: bool, buf: &[u8], byte: usize) -> (CharType, usize, usi
     (ctype, cwidth, nbytes)
 }
 
+#[allow(clippy::cognitive_complexity)]
 fn unexpand(options: &Options) -> std::io::Result<()> {
     let mut output = BufWriter::new(stdout());
     let ts = &options.tabstops[..];

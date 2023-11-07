@@ -1,16 +1,11 @@
-//  * This file is part of the uutils coreutils package.
-//  *
-//  * For the full copyright and license information, please view the LICENSE
-//  * file that was distributed with this source code.
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
 
-extern crate uucore;
-
-use crate::common::util::*;
-
-use self::uucore::entries::{Locate, Passwd};
-
-extern crate pinky;
-pub use self::pinky::*;
+use crate::common::util::{expected_result, TestScenario};
+use pinky::Capitalize;
+use uucore::entries::{Locate, Passwd};
 
 #[test]
 fn test_invalid_arg() {
@@ -35,8 +30,7 @@ fn test_long_format() {
     let real_name = user_info.replace('&', &pw.name.capitalize());
     let ts = TestScenario::new(util_name!());
     ts.ucmd().arg("-l").arg(login).succeeds().stdout_is(format!(
-        "Login name: {:<28}In real life:  {}\nDirectory: {:<29}Shell:  {}\n\n",
-        login, real_name, user_dir, user_shell
+        "Login name: {login:<28}In real life:  {real_name}\nDirectory: {user_dir:<29}Shell:  {user_shell}\n\n"
     ));
 
     ts.ucmd()
@@ -44,8 +38,7 @@ fn test_long_format() {
         .arg(login)
         .succeeds()
         .stdout_is(format!(
-            "Login name: {:<28}In real life:  {1}\n\n",
-            login, real_name
+            "Login name: {login:<28}In real life:  {real_name}\n\n"
         ));
 }
 
@@ -57,7 +50,7 @@ fn test_long_format_multiple_users() {
     // and an account that (probably) doesn't exist
     let runner = match std::env::var("USER") {
         Ok(user) => user,
-        Err(_) => "".to_string(),
+        Err(_) => String::new(),
     };
     let args = ["-l", "root", "root", "root", &runner, "no_such_user"];
     let ts = TestScenario::new(util_name!());

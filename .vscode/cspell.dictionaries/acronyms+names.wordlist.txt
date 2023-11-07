@@ -50,6 +50,7 @@ Gmail
 GNU
 Illumos
 Irix
+libfuzzer
 MS-DOS
 MSDOS
 MacOS
@@ -57,6 +58,7 @@ MinGW
 Minix
 NetBSD
 Novell
+Nushell
 OpenBSD
 POSIX
 PowerPC

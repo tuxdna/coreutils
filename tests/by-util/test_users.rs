@@ -1,4 +1,8 @@
-use crate::common::util::*;
+// This file is part of the uutils coreutils package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+use crate::common::util::TestScenario;
 
 #[test]
 fn test_invalid_arg() {
@@ -22,7 +26,7 @@ fn test_users_check_name() {
     // note: clippy::needless_borrow *false positive*
     #[allow(clippy::needless_borrow)]
     let expected = TestScenario::new(&util_name)
-        .cmd_keepenv(util_name)
+        .cmd(util_name)
         .env("LC_ALL", "C")
         .succeeds()
         .stdout_move_str();
